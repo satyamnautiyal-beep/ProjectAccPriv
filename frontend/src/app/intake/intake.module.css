@@ -1,0 +1,181 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-4) 0;
+}
+
+.formContainer {
+  width: 100%;
+  max-width: 800px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.header {
+  padding: var(--space-6);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-root);
+  text-align: center;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: var(--space-2);
+}
+
+.subtitle {
+  color: var(--text-muted);
+}
+
+.stepper {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-8);
+  border-bottom: 1px solid var(--border);
+  background: white;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  position: relative;
+  flex: 1;
+}
+
+.step::after {
+  content: '';
+  position: absolute;
+  top: 14px;
+  right: calc(-50% + 14px);
+  width: calc(100% - 28px);
+  height: 2px;
+  background-color: var(--border);
+  z-index: 1;
+}
+
+.step:last-child::after {
+  display: none;
+}
+
+.step.active::after, .step.completed::after {
+  background-color: var(--primary);
+}
+
+.stepIndicator {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: var(--bg-root);
+  border: 2px solid var(--border);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  z-index: 2;
+  position: relative;
+}
+
+.step.active .stepIndicator {
+  border-color: var(--primary);
+  background-color: var(--primary);
+  color: white;
+}
+
+.step.completed .stepIndicator {
+  border-color: var(--primary);
+  background-color: var(--primary);
+  color: white;
+}
+
+.stepLabel {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.step.active .stepLabel, .step.completed .stepLabel {
+  color: var(--text-main);
+}
+
+.formContent {
+  padding: var(--space-8);
+}
+
+.row {
+  display: flex;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.col {
+  flex: 1;
+}
+
+.inputGroup {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--space-4);
+}
+
+.label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+  color: var(--text-main);
+}
+
+.input {
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  font-size: 0.95rem;
+  transition: all 0.2s;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.footer {
+  padding: var(--space-5) var(--space-8);
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  background: var(--bg-root);
+}
+
+.btnBack {
+  background: white;
+  border: 1px solid var(--border);
+  padding: 0 var(--space-5);
+  height: 42px;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+}
+
+.btnNext {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 0 var(--space-5);
+  height: 42px;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+}
+
+.btnNext:hover {
+  background: var(--primary-hover);
+}

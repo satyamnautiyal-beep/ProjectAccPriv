@@ -1,0 +1,135 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.titleIcon {
+  color: var(--primary);
+}
+
+.gridSystem {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-6);
+}
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.cardHeader {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-root);
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cardContent {
+  padding: var(--space-5);
+  flex: 1;
+}
+
+.insightList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.insightItem {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.insightIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.insightIcon.bottleneck { background: var(--danger-light); color: var(--danger); }
+.insightIcon.optimization { background: var(--warning-light); color: var(--warning); }
+.insightIcon.prediction { background: var(--primary-light); color: var(--primary); }
+
+.insightBody {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.insightTitle {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.insightDesc {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.actionBtn {
+  margin-top: var(--space-2);
+  align-self: flex-start;
+  color: var(--primary);
+  font-weight: 500;
+  font-size: 0.85rem;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--primary-light);
+  background: var(--primary-light);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.actionBtn:hover {
+  background: var(--primary);
+  color: white;
+}
+
+.chartPlaceholder {
+  height: 200px;
+  width: 100%;
+  background: linear-gradient(135deg, var(--bg-root) 25%, transparent 25%) -10px 0,
+              linear-gradient(225deg, var(--bg-root) 25%, transparent 25%) -10px 0,
+              linear-gradient(315deg, var(--bg-root) 25%, transparent 25%),
+              linear-gradient(45deg, var(--bg-root) 25%, transparent 25%);
+  background-size: 20px 20px;
+  background-color: var(--bg-surface);
+  border: 1px dashed var(--border-focus);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-bottom: var(--space-4);
+}

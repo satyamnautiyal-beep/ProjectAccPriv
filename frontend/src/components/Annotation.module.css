@@ -1,0 +1,86 @@
+.annotationWrapper {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.marker {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  background-color: var(--warning);
+  color: #fff;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  z-index: 50;
+  box-shadow: var(--shadow-md);
+  border: 2px solid var(--bg-surface);
+  transition: transform 0.2s ease;
+}
+
+.marker:hover {
+  transform: scale(1.1);
+}
+
+.tooltip {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 12px;
+  width: 320px;
+  background-color: #1e293b; /* darker slate for high contrast */
+  color: #f8fafc;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  font-size: 13px;
+  line-height: 1.5;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-5px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: auto;
+}
+
+.marker:hover + .tooltip,
+.tooltip:hover {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Specific styling for the content inside tooltip */
+.title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--warning);
+}
+
+.section {
+  margin-bottom: var(--space-2);
+}
+
+.label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #94a3b8;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-bottom: 2px;
+  display: block;
+}
+
+.text {
+  color: #f1f5f9;
+}
