@@ -36,13 +36,14 @@ export default function LoginPage() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', width: '100vw', backgroundColor: 'var(--bg-root)', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, zIndex: 1000 }}>
-      <Annotation
-        title="Login system"
-        what="entry point"
-        why="security"
-        how="Validates system access against enterprise logic to gate AI system access."
-      >
-        <div className={styles.sectionCard} style={{ width: '400px', padding: 'var(--space-8)' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', maxWidth: '400px', margin: '0 auto' }}>
+        <Annotation
+          title="Login system"
+          what="entry point"
+          why="security"
+          how="Validates system access against enterprise logic to gate AI system access."
+        >
+          <div className={styles.sectionCard} style={{ width: '100%', padding: 'var(--space-8)' }}>
           <h1 className={styles.title} style={{textAlign: 'center', marginBottom: 'var(--space-6)'}}>Healthcare Hub</h1>
           <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
             {error && <div style={{ color: 'var(--danger)', backgroundColor: 'var(--danger-light)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', fontSize: '0.9rem', textAlign: 'center' }}>{error}</div>}
@@ -83,6 +84,7 @@ export default function LoginPage() {
           </form>
         </div>
       </Annotation>
+      </div>
     </div>
   );
 }
