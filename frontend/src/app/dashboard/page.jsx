@@ -1,145 +1,168 @@
 'use client';
 
 import React from 'react';
-import Link from 'next/link';
-import { Plus, Users, FileText, AlertCircle, Clock, TrendingUp, TrendingDown, CheckCircle2 } from 'lucide-react';
-import styles from './dashboard.module.css';
-import Annotation from '../../components/Annotation';
+import Annotation from '@/components/Annotation';
+import styles from '@/components/shared.module.css';
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend } from 'recharts';
+import { Files, Users, AlertTriangle, CheckCircle, Activity, ShieldCheck } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 
-const kpis = [
-  { title: 'Total Enrollments', value: '12,450', trend: '+14%', isPositive: true, icon: Users },
-  { title: 'Pending Cases', value: '342', trend: '-5%', isPositive: true, icon: FileText },
-  { title: 'Action Required', value: '28', trend: '+2', isPositive: false, icon: AlertCircle },
-  { title: 'Avg Process Time', value: '2.4 days', trend: '-0.3 days', isPositive: true, icon: Clock },
-];
+export default function DashboardPage() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['metrics'],
+    queryFn: () => fetch('/api/metrics').then(res => res.json()),
+    refetchInterval: 2000
+  });
 
-const recentCases = [
-  { id: 'CAS-8921', name: 'Robert Chen', type: 'New Enrollment', status: 'In Review', date: 'Oct 24, 2026' },
-  { id: 'CAS-8920', name: 'Maria Garcia', type: 'Renewal', status: 'Pending Docs', date: 'Oct 24, 2026' },
-  { id: 'CAS-8919', name: 'James Wilson', type: 'Appeal', status: 'Approved', date: 'Oct 23, 2026' },
-  { id: 'CAS-8918', name: 'Sarah Johnson', type: 'New Enrollment', status: 'Action Required', date: 'Oct 23, 2026' },
-];
+  if (isLoading) return <div className={styles.container}>Loading dashboard analytics...</div>;
 
-const activities = [
-  { icon: CheckCircle2, text: 'System automatically verified documents for CAS-8915.', time: '10 mins ago' },
-  { icon: AlertCircle, text: 'Discrepancy found in renewal application for Thomas Wright.', time: '45 mins ago' },
-  { icon: Users, text: 'Jane Doe assigned 5 new enrollment cases.', time: '2 hours ago' },
-];
+  const { kpis, pieData } = data;
 
-export default function Dashboard() {
+  const funnelData = [
+    { label: 'Files Received', value: kpis.filesToday, color: '#3b82f6' }, // blue
+    { label: 'Under Review', value: kpis.membersIdentified, color: '#6366f1' }, // indigo
+    { label: 'Needs Attention', value: kpis.pendingCount, color: '#f59e0b' }, // yellow
+    { label: 'Ready for Enrollment', value: kpis.readyCount, color: '#22c55e' }, // green
+    { label: 'Enrolled', value: kpis.completedBatches * 50, color: '#10b981' } // teal
+  ];
+
+  // Helper to visually render a funnel bar
+  const maxFunnelValue = Math.max(...funnelData.map(d => d.value), 1);
+
   return (
     <div className={styles.container}>
-      <header className={styles.header}>
+      <div className={styles.header}>
         <div>
-          <h1 className={styles.title}>Dashboard overview</h1>
-          <p className={styles.subtitle}>Welcome back, Jane. Here's what's happening today.</p>
+          <h1 className={styles.title}>Leadership Overview</h1>
+          <p className={styles.subtitle}>Overview of Agentic AI system health and business progress.</p>
         </div>
-        <div className={styles.actions}>
-          <Link href="/intake" className={styles.primaryButton}>
-            <Plus size={18} />
-            New Enrollment
-          </Link>
-        </div>
-      </header>
-      
+      </div>
+
       <Annotation
-        title="Key Performance Indicators"
-        what="Topline metrics displaying real-time enrollment health."
-        why="Executives and managers need immediate visibility into bottlenecks and volume."
-        how="Using large typography for numbers and distinct color-coded trend indicators (Red/Green) for immediate cognitive processing."
+        title="KPI Tiles"
+        what="Six specific KPI cards for system health."
+        why="Gives leadership a snapshot of files in and enrollments out without technical noise."
+        how="Placed prominently at the top with recognizable icons."
       >
-        <div className={styles.kpiGrid}>
-          {kpis.map((kpi, idx) => {
-            const Icon = kpi.icon;
-            return (
-              <div key={idx} className={styles.kpiCard}>
-                <div className={styles.kpiHeader}>
-                  {kpi.title}
-                  <div className={styles.kpiIcon}><Icon size={18} /></div>
-                </div>
-                <div className={styles.kpiValue}>{kpi.value}</div>
-                <div className={`${styles.kpiTrend} ${kpi.isPositive ? styles.positive : styles.negative}`}>
-                  {kpi.isPositive ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-                  <span>{kpi.trend} from last month</span>
-                </div>
-              </div>
-            );
-          })}
+        <div className={styles.kpiGrid} style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiHeader}>
+              <span>Files Received Today</span>
+              <Files className={styles.kpiIcon} size={20} />
+            </div>
+            <div className={styles.kpiValue}>{kpis.filesToday}</div>
+          </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiHeader}>
+              <span>Members Identified</span>
+              <Users className={styles.kpiIcon} size={20} />
+            </div>
+            <div className={styles.kpiValue}>{kpis.membersIdentified}</div>
+          </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiHeader}>
+              <span>Members Ready for Enrollment</span>
+              <CheckCircle className={styles.kpiIcon} size={20} style={{color: 'var(--success)', background: 'var(--success-light)'}} />
+            </div>
+            <div className={styles.kpiValue}>{kpis.readyCount}</div>
+          </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiHeader}>
+              <span>Members Awaiting Clarification</span>
+              <AlertTriangle className={styles.kpiIcon} size={20} style={{color: 'var(--warning)', background: 'var(--warning-light)'}} />
+            </div>
+            <div className={styles.kpiValue}>{kpis.awaitingClarification > 0 ? kpis.awaitingClarification : kpis.pendingCount}</div>
+          </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiHeader}>
+              <span>Enrollments in Progress</span>
+              <Activity className={styles.kpiIcon} size={20} style={{color: 'var(--primary)', background: 'var(--primary-light)'}} />
+            </div>
+            <div className={styles.kpiValue}>{kpis.inProgressBatches}</div>
+          </div>
+          <div className={styles.kpiCard}>
+            <div className={styles.kpiHeader}>
+              <span>Completed Enrollments</span>
+              <ShieldCheck className={styles.kpiIcon} size={20} style={{color: 'var(--success)', background: 'var(--success-light)'}} />
+            </div>
+            <div className={styles.kpiValue}>{kpis.completedBatches}</div>
+          </div>
         </div>
       </Annotation>
 
       <div className={styles.gridSystem}>
         <Annotation
-          title="Recent Cases Table"
-          what="A structured data table showing the most recent case updates."
-          why="Case workers spend most of their time monitoring case statuses. A clean table allows rapid scanning."
-          how="Implementing minimalist borders and semantic status badges (e.g. Warning for 'Pending Docs')."
+          title="Processing Funnel"
+          what="Visual drop-off distribution of files down to enrollment."
+          why="Shows the exact flow of members in the pipeline from start to finish."
+          how="Aligns horizontal bars centrally to simulate a business conversion funnel."
         >
-          <div className={styles.sectionCard}>
+          <div className={styles.sectionCard} style={{height: '350px'}}>
             <div className={styles.cardHeader}>
-              <h2 className={styles.cardTitle}>Recent Cases</h2>
-              <Link href="/cases" className={styles.viewAll}>View all</Link>
+              <h2 className={styles.cardTitle}>Processing Funnel</h2>
             </div>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Case ID</th>
-                  <th>Applicant</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentCases.map((c, i) => (
-                  <tr key={i}>
-                    <td><Link href={`/cases/${c.id}`} className={styles.viewAll}>{c.id}</Link></td>
-                    <td>{c.name}</td>
-                    <td>{c.type}</td>
-                    <td>
-                      <span className={`${styles.badge} ${
-                        c.status === 'Approved' ? styles.approved : 
-                        c.status === 'In Review' ? styles.review : 
-                        styles.pending
-                      }`}>
-                        {c.status}
-                      </span>
-                    </td>
-                    <td>{c.date}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{padding: 'var(--space-6)', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', flex: 1, justifyContent: 'center'}}>
+              {funnelData.map((step, idx) => {
+                // Creates a centered funnel UX look (mimicking conversion)
+                const percent = Math.max(5, (step.value / maxFunnelValue) * 100);
+                const visualPercent = Math.max(10, 100 - (idx * 15)); // Guarantee a funnel shape visually if data is zero/low for UX prototyping purposes
+                const finalBarWidth = step.value === 0 ? visualPercent : percent;
+                
+                return (
+                  <div key={idx} style={{display: 'flex', alignItems: 'center', gap: 'var(--space-4)'}}>
+                    <div style={{width: '160px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)', textAlign: 'right'}}>
+                      {step.label}
+                    </div>
+                    <div style={{flex: 1, height: '24px', display: 'flex', justifyContent: 'center'}}>
+                      <div style={{
+                        backgroundColor: step.color,
+                        height: '100%',
+                        width: `${finalBarWidth}%`,
+                        borderRadius: 'var(--radius-sm)',
+                        transition: 'width 0.5s'
+                      }} />
+                    </div>
+                    <div style={{width: '60px', fontWeight: 700, fontSize: '0.9rem'}}>
+                      {step.value}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </Annotation>
 
         <Annotation
-          title="AI Activity Feed"
-          what="A rolling log of system and user activities."
-          why="Provides operational context and awareness of automated background tasks (like document verification)."
-          how="Built as a vertical timeline using distinct iconography to separate human vs AI actions."
+          title="Member Status Distribution"
+          what="Pie chart showing exact distribution of Ready/Pending/Awaiting/Blocked."
+          why="Breaks down total member exceptions for leadership review."
+          how="Interactive pie chart allows hovering over segments."
         >
-          <div className={styles.sectionCard}>
+          <div className={styles.sectionCard} style={{height: '350px'}}>
             <div className={styles.cardHeader}>
-              <h2 className={styles.cardTitle}>Activity Feed</h2>
-              <Link href="/tasks" className={styles.viewAll}>View tasks</Link>
+              <h2 className={styles.cardTitle}>Member Status</h2>
             </div>
-            <ul className={styles.activityFeed}>
-              {activities.map((act, i) => {
-                const Icon = act.icon;
-                return (
-                  <li key={i} className={styles.activityItem}>
-                    <div className={styles.activityIconWrapper}>
-                      <Icon size={16} />
-                    </div>
-                    <div className={styles.activityContent}>
-                      <span className={styles.activityText}>{act.text}</span>
-                      <span className={styles.activityTime}>{act.time}</span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+            <div style={{flex: 1, padding: 'var(--space-4)', display: 'flex', justifyContent: 'center', alignItems: 'center'}}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={100}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip />
+                  <Legend verticalAlign="bottom" height={36}/>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </Annotation>
       </div>

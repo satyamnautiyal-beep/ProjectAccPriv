@@ -5,13 +5,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { 
   LayoutDashboard, 
-  Briefcase, 
-  UserPlus, 
-  RefreshCcw, 
-  Layers, 
-  Users, 
-  BrainCircuit, 
-  CheckSquare, 
+  FileText,
+  UserCheck,
+  MessageSquare,
+  CheckCircle,
+  Package,
+  Activity,
+  BarChart,
   Settings 
 } from 'lucide-react';
 import useUIStore from '../../store/uiStore';
@@ -19,13 +19,13 @@ import styles from './Sidebar.module.css';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/cases', label: 'Case Management', icon: Briefcase },
-  { href: '/intake', label: 'Member Enrollment', icon: UserPlus },
-  { href: '/renewals', label: 'Renewals & Updates', icon: RefreshCcw },
-  { href: '/reconciliation', label: 'Reconciliation', icon: Layers },
-  { href: '/members', label: 'Member Profile', icon: Users },
-  { href: '/ai-insights', label: 'AI Agent Panel', icon: BrainCircuit },
-  { href: '/tasks', label: 'Task Center', icon: CheckSquare },
+  { href: '/file-intake', label: 'File Intake', icon: FileText },
+  { href: '/member-review', label: 'Member Review', icon: UserCheck },
+  { href: '/clarifications', label: 'Clarifications', icon: MessageSquare },
+  { href: '/enrollment-readiness', label: 'Enrollment Readiness', icon: CheckCircle },
+  { href: '/batch-preparation', label: 'Batch Preparation', icon: Package },
+  { href: '/enrollment-monitoring', label: 'Enrollment Monitoring', icon: Activity },
+  { href: '/insights', label: 'Insights', icon: BarChart },
 ];
 
 export default function Sidebar() {
