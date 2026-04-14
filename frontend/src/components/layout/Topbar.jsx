@@ -5,9 +5,11 @@ import { usePathname } from 'next/navigation';
 import { Menu, Search, Bell, HelpCircle, ToggleLeft, ToggleRight } from 'lucide-react';
 import useUIStore from '../../store/uiStore';
 import styles from './Topbar.module.css';
+import { useRouter } from 'next/navigation';
 
 export default function Topbar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { sidebarOpen, toggleSidebar, showAnnotations, toggleAnnotations } = useUIStore();
 
   if (pathname === '/login') return null;
@@ -44,12 +46,23 @@ export default function Topbar() {
           <Bell size={20} />
         </button>
         
-        <div className={styles.profile}>
-          <div className={styles.avatar}>JD</div>
-          <div className={styles.userInfo}>
-            <span className={styles.userName}>Jane Doe</span>
-            <span className={styles.userRole}>Case Worker</span>
+        <div className={styles.profile} style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
+          <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+            <div className={styles.avatar}>JD</div>
+            <div className={styles.userInfo}>
+              <span className={styles.userName}>Jane Doe</span>
+              <span className={styles.userRole}>Case Worker</span>
+            </div>
           </div>
+          <button 
+            style={{background: 'var(--bg-surface)', border: '1px solid var(--border)', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', color: 'var(--text)'}}
+            onClick={async () => {
+              await fetch('/api/logout', { method: 'POST' });
+              router.push('/login');
+            }}
+          >
+            Logout
+          </button>
         </div>
       </div>
     </header>

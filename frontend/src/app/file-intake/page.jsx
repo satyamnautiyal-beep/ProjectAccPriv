@@ -3,13 +3,18 @@
 import React, { useRef, useState } from 'react';
 import Annotation from '@/components/Annotation';
 import styles from '@/components/shared.module.css';
-import { FileText, UploadCloud, RefreshCw } from 'lucide-react';
+import { FileText, UploadCloud, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
 
 export default function FileIntakePage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef(null);
+  const router = useRouter();
   const [isDragging, setIsDragging] = useState(false);
+  
+  // UI states for validation simulation feedback
+  const [uploadState, setUploadState] = useState(''); // 'reviewing', 'error', 'success'
 
   const { data: files = [], isLoading } = useQuery({
     queryKey: ['files'],
@@ -19,20 +24,34 @@ export default function FileIntakePage() {
 
   const uploadMutation = useMutation({
     mutationFn: async (fileList) => {
-      // Supports multiple file processing by mapping into concurrent POST handlers
-      const promises = Array.from(fileList).map(file => {
-        const formData = new FormData();
-        formData.append('file', file);
-        return fetch('/api/upload-file', {
-          method: 'POST',
-          body: formData
-        });
+      setUploadState('reviewing');
+      
+      const file = fileList[0]; // Restrict to single validation demo
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // Simulate artificial delay for "reviewing structure"
+      await new Promise(r => setTimeout(r, 1500));
+      
+      const res = await fetch('/api/upload-file', {
+        method: 'POST',
+        body: formData
       });
-      await Promise.all(promises);
+      return await res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['files'] });
       queryClient.invalidateQueries({ queryKey: ['metrics'] });
+      
+      if (data.valid === false) {
+        setUploadState('error');
+      } else {
+        setUploadState('success');
+        // Auto-redirect valid files gracefully
+        setTimeout(() => {
+          router.push('/member-review');
+        }, 1500); 
+      }
     }
   });
 
@@ -67,9 +86,7 @@ export default function FileIntakePage() {
       'Invalid': 'Cannot be Processed'
     };
     
-    // Abstract complexity by remapping
     const status = statusMap[rawStatus] || rawStatus;
-    
     switch (status) {
       case 'Ready for Enrollment': return <span className={`${styles.badge} ${styles.approved}`}>{status}</span>;
       case 'Needs Clarification': return <span className={`${styles.badge} ${styles.pending}`}>{status}</span>;
@@ -87,11 +104,35 @@ export default function FileIntakePage() {
         </div>
       </div>
 
+      {uploadState === 'error' && (
+        <Annotation title="Alert" what="handles invalid input" why="Business logic barrier" how="Ensures structural trash files never pollute downstream systems.">
+          <div style={{backgroundColor: 'var(--danger-light)', border: '1px solid var(--danger)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--space-6)', fontWeight: 600}}>
+            <AlertTriangle size={20} />
+            File structure issue detected. Broker has been notified.
+          </div>
+        </Annotation>
+      )}
+
+      {uploadState === 'success' && (
+        <Annotation title="Redirect" what="smooth progression" why="Automates manual labor" how="Eliminates the human need to manually navigate forward if a file works natively.">
+           <div style={{backgroundColor: 'var(--success-light)', border: '1px solid var(--success)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', color: 'var(--success-dark)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--space-6)', fontWeight: 600}}>
+            File processed successfully! Redirecting to Member Review...
+          </div>
+        </Annotation>
+      )}
+
+      {uploadState === 'reviewing' && (
+         <div style={{backgroundColor: 'var(--primary-light)', border: '1px solid var(--primary)', padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: 'var(--space-6)', fontWeight: 600}}>
+           <RefreshCw size={20} className="animate-spin" />
+           Reviewing file structure...
+         </div>
+      )}
+
       <Annotation
-        title="File Upload Area"
-        what="enables file intake"
-        why="placed at top for visibility"
-        how="Allows admin to seamlessly drag single or multiple .EDI files."
+        title="Upload"
+        what="start of workflow"
+        why="Ingestion point"
+        how="Accepts raw EDI package feeds securely."
       >
         <div 
           className={styles.sectionCard} 
@@ -114,27 +155,26 @@ export default function FileIntakePage() {
         >
           <input 
             type="file" 
-            multiple
             ref={fileInputRef} 
             onChange={handleFileUpload} 
             style={{ display: 'none' }} 
             accept=".csv, .xlsx, .xls, .edi"
           />
-          {uploadMutation.isPending ? (
+          {uploadState === 'reviewing' ? (
             <RefreshCw size={48} className="animate-spin" color="var(--primary)" style={{marginBottom: 'var(--space-4)'}} />
           ) : (
             <UploadCloud size={48} color="var(--primary)" style={{marginBottom: 'var(--space-4)'}} />
           )}
-          <h3 style={{fontWeight: 600, fontSize: '1.2rem', marginBottom: 'var(--space-2)'}}>Upload .EDI files (single or multiple)</h3>
+          <h3 style={{fontWeight: 600, fontSize: '1.2rem', marginBottom: 'var(--space-2)'}}>Upload .EDI files</h3>
           <p style={{color: 'var(--text-muted)'}}>Drag & drop files here or click anywhere in this box to browse</p>
         </div>
       </Annotation>
 
       <Annotation
-        title="File Table"
-        what="shows processing results"
-        why="central for focus"
-        how="Status labels simplify backend complexity to improve understanding for leadership without exposing raw X12 failures."
+        title="Validation decision"
+        what="controls system flow"
+        why="Prevents downstream failures"
+        how="Evaluates payload integrity dynamically."
       >
         <div className={styles.sectionCard}>
           <div className={styles.cardHeader}>
@@ -156,7 +196,6 @@ export default function FileIntakePage() {
                   <td>
                     <div style={{display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500}}>
                       <FileText size={16} className={styles.kpiIcon} style={{padding: '2px', background: 'transparent'}}/>
-                      {/* Forcing string rendering to .EDI extension as requested by business requirements context */}
                       {file.fileName.endsWith('.edi') ? file.fileName : `${file.fileName.split('.')[0] || file.fileName}.edi`}
                     </div>
                   </td>

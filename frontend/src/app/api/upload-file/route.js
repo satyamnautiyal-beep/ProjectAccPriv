@@ -19,14 +19,23 @@ export async function POST(request) {
     const db = readDb();
     
     const numMembers = Math.floor(Math.random() * 50) + 10;
+    
+    // Simulate structural decision gate
+    const fileStructureValid = Math.random() > 0.4; // 60% probability of valid structure
+    
     const newFile = {
       id: Date.now().toString(),
       fileName: file.name,
       uploadTime: new Date().toISOString(),
-      status: 'Parsing',
-      membersCount: numMembers
+      status: fileStructureValid ? 'Parsing' : 'Invalid',
+      membersCount: fileStructureValid ? numMembers : 0
     };
     db.files.unshift(newFile);
+
+    if (!fileStructureValid) {
+       writeDb(db);
+       return NextResponse.json({ valid: false, file: newFile });
+    }
 
     const enrollmentTypes = ['New Enrollment', 'Updates', 'Termination'];
     
@@ -69,7 +78,7 @@ export async function POST(request) {
     }
 
     writeDb(db);
-    return NextResponse.json(newFile);
+    return NextResponse.json({ valid: true, file: newFile });
   } catch (err) {
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
   }

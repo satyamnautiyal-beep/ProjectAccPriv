@@ -1,84 +1,86 @@
 'use client';
 
-import React from 'react';
-import Link from 'next/link';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import styles from './login.module.css';
-import Annotation from '../../components/Annotation';
+import Annotation from '@/components/Annotation';
+import styles from '@/components/shared.module.css';
 
-export default function Login() {
+export default function LoginPage() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    router.push('/dashboard');
+    setLoading(true);
+    setError('');
+
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      if (res.ok) {
+        router.push('/dashboard');
+      } else {
+        setError('Invalid credentials. Use admin@demo.com / admin123');
+      }
+    } catch(err) {
+      setError('System error');
+    }
+    setLoading(false);
   };
 
   return (
-    <div className={styles.container}>
-      <div className={styles.leftPanel}>
-        <div className={styles.loginCard}>
-          <div className={styles.logo}>
-            <div className={styles.logoMark}></div>
-            <div className={styles.logoText}>HealthEnroll</div>
-          </div>
-          
-          <Annotation 
-            title="Authentication Form"
-            what="Clean, focused login interface without distractions."
-            why="Enterprise applications require high security focus and clear data entry points."
-            how="Using high contrast inputs and establishing trust through consistent brand styling."
-          >
-            <form onSubmit={handleLogin}>
-              <h1 className={styles.cardTitle}>Welcome back</h1>
-              <p className={styles.cardSubtitle}>Please enter your details to sign in.</p>
-              
-              <div className={styles.inputGroup}>
-                <label className={styles.label}>Email Address</label>
-                <input type="email" placeholder="name@company.com" className={styles.input} required />
-              </div>
-              
-              <div className={styles.inputGroup}>
-                <label className={styles.label}>Password</label>
-                <input type="password" placeholder="••••••••" className={styles.input} required />
-              </div>
-              
-              <div className={styles.options}>
-                <label className={styles.checkboxContainer}>
-                  <input type="checkbox" />
-                  <span>Remember me for 30 days</span>
-                </label>
-                <Link href="#" className={styles.link}>Forgot password?</Link>
-              </div>
-              
-              <button type="submit" className={styles.button}>Sign In</button>
-            </form>
-          </Annotation>
-        </div>
-      </div>
-      
+    <div style={{ display: 'flex', height: '100vh', width: '100vw', backgroundColor: 'var(--bg-root)', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, zIndex: 1000 }}>
       <Annotation
-        title="Split Screen Layout"
-        what="50/50 split connecting the authentication functionality to the brand."
-        why="Reinforces the value proposition and corporate identity for large healthcare networks."
-        how="Utilizing a vibrant brand gradient with soft floating radial blobs to create depth."
+        title="Login system"
+        what="entry point"
+        why="security"
+        how="Validates system access against enterprise logic to gate AI system access."
       >
-        <div className={styles.rightPanel}>
-          <div className={styles.decorBlob}></div>
-          <div className={styles.decorBlob2}></div>
-          
-          <div className={styles.heroContent}>
-            <h2 className={styles.heroTitle}>Streamline your enrollment pipeline.</h2>
-            <p className={styles.heroText}>
-              The fastest, most secure way to process healthcare cases, manage renewals, and reconcile member data.
-            </p>
-          </div>
-          
-          <div className={styles.quote}>
-            "HealthEnroll has transformed our intake process, saving our case workers 15 hours a week."
-            <br/><br/>
-            — Director of Admissions, National Health Corp
-          </div>
+        <div className={styles.sectionCard} style={{ width: '400px', padding: 'var(--space-8)' }}>
+          <h1 className={styles.title} style={{textAlign: 'center', marginBottom: 'var(--space-6)'}}>Healthcare Hub</h1>
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            {error && <div style={{ color: 'var(--danger)', backgroundColor: 'var(--danger-light)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', fontSize: '0.9rem', textAlign: 'center' }}>{error}</div>}
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              <label style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-muted)' }}>Email</label>
+              <input 
+                type="email" 
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="admin@demo.com"
+                style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text)' }}
+                required
+              />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              <label style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-muted)' }}>Password</label>
+              <input 
+                type="password" 
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="admin123"
+                style={{ padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text)' }}
+                required
+              />
+            </div>
+
+            <button 
+              type="submit" 
+              className={styles.primaryButton}
+              style={{ marginTop: 'var(--space-4)', padding: 'var(--space-3)' }}
+              disabled={loading}
+            >
+              {loading ? 'Authenticating...' : 'Login'}
+            </button>
+            <p style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 'var(--space-4)' }}>Testing access: admin@demo.com / admin123</p>
+          </form>
         </div>
       </Annotation>
     </div>
