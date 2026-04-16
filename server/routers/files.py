@@ -1,20 +1,22 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import os
 import time
-import datetime
-import random
 import json
-from server.database import DATA_DIR
+import random
+from datetime import datetime
+from db.mongo_connection import save_member_to_mongo
+from parser import parse_edi
 
 router = APIRouter(prefix="/api")
 
 def generate_random_name():
-    firsts = ['John', 'Sarah', 'Emily', 'Michael', 'David', 'Jessica', 'Marcus', 'Chloe', 'James', 'Linda']
-    lasts = ['Connor', 'Doe', 'Smith', 'Davis', 'Johnson', 'Williams', 'Brown', 'Taylor', 'Wilson', 'Moore']
-    return f"{random.choice(firsts)} {random.choice(lasts)}"
+    # Note: random removed to simplify, using static for now or could re-import
+    return "New Batch"
 
 def get_todays_dir():
-    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    # from datetime import datetime was used, so we use datetime.now()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    from server.database import DATA_DIR
     target_dir = os.path.join(DATA_DIR, today_str)
     os.makedirs(target_dir, exist_ok=True)
     return target_dir
@@ -69,51 +71,104 @@ async def upload_file(file: UploadFile = File(...)):
     
     return {"success": True, "fileId": file_id}
 
+def check_file_integrity(filepath):
+    """
+    Physically validates the EDI file structure and envelopes.
+    """
+    try:
+        if not os.path.exists(filepath):
+            return "File Missing"
+        
+        with open(filepath, 'r') as f:
+            content = f.read().strip()
+            # Split into segments by the standard X12 terminator '~'
+            segments = [s.strip() for s in content.split('~') if s.strip()]
+            
+            if not segments:
+                return "Empty File"
+
+            # 1. ISA/IEA Envelope Check
+            if not segments[0].startswith('ISA'):
+                return "Missing ISA Header"
+            if not segments[-1].startswith('IEA'):
+                return "Missing IEA Trailer"
+
+            # 2. Segment Splitting for Control Number check
+            isa_elements = segments[0].split('*')
+            iea_elements = segments[-1].split('*')
+
+            if len(isa_elements) < 14:
+                return "Truncated ISA Segment"
+            if len(iea_elements) < 3:
+                return "Truncated IEA Segment"
+
+            # 3. Control Number Integrity Check
+            # ISA13 must match IEA02
+            isa_control = isa_elements[13].strip()
+            iea_control = iea_elements[2].strip()
+
+            if isa_control != iea_control:
+                return f"Control Number Mismatch (ISA:{isa_control} != IEA:{iea_control})"
+
+            return "Healthy"
+    except Exception as e:
+        return f"Structure Error: {str(e)}"
+
 @router.post("/check-structure")
 def check_structure():
     target_dir = get_todays_dir()
     statuses = get_statuses()
-    
     results = []
     
-    unchecked_files = []
+    # Identify files that need checking or parsing
+    files_to_check = []
     if os.path.exists(target_dir):
         for fname in os.listdir(target_dir):
             if fname.endswith(".edi"):
                 st = statuses.get(fname, {"status": "Unchecked", "id": fname})
-                if st["status"] == "Unchecked":
-                    unchecked_files.append(fname)
+                if st["status"] in ["Unchecked", "Healthy"]:
+                    files_to_check.append(fname)
                 else:
                     results.append({"id": st["id"], "fileName": fname, "status": st["status"]})
 
-    total_unchecked = len(unchecked_files)
     new_healthy = 0
     new_issues = 0
     
-    if total_unchecked > 0:
-        if total_unchecked == 1:
-            healthy_target = 1 if random.random() < 0.9 else 0
-        else:
-            healthy_ratio = random.uniform(0.80, 1.0)
-            healthy_target = round(total_unchecked * healthy_ratio)
-            
-        issue_target = total_unchecked - healthy_target
+    # Process each file with real integrity logic
+    for fname in files_to_check:
+        filepath = os.path.join(target_dir, fname)
+        st = statuses.get(fname, {"status": "Unchecked", "id": str(int(time.time()*1000))})
         
-        # Track these cleanly for the UI popup
-        new_healthy = healthy_target
-        new_issues = issue_target
+        # Call the real validator
+        validation_status = check_file_integrity(filepath)
         
-        random.shuffle(unchecked_files)
-        
-        for i, fname in enumerate(unchecked_files):
-            st = statuses.get(fname, {"status": "Unchecked", "id": fname})
-            if i < issue_target:
-                st["status"] = random.choice(["Corrupt", "Broken"])
-            else:
-                st["status"] = "Healthy"
+        st["status"] = validation_status
+        if validation_status == "Healthy":
+            try:
+                with open(filepath, 'r') as f:
+                    edi_text = f.read()
+                parsed_data = parse_edi(edi_text)
                 
-            statuses[fname] = st
-            results.append({"id": st["id"], "fileName": fname, "status": st["status"]})
+                for transaction in parsed_data.get("transactions", []):
+                    for m_data in transaction.get("members", []):
+                        info = m_data.get("member_info", {})
+                        sub_id = info.get("subscriber_id") or f"MEM-{os.urandom(4).hex()}"
+                        m_data["subscriber_id"] = sub_id
+                        m_data["status"] = "Pending Business Validation"
+                        save_member_to_mongo(m_data)
+                
+                os.remove(filepath)
+                st["status"] = "Parsed & Ingested"
+                new_healthy += 1
+            except Exception as e:
+                print(f"Auto-Parse Error for {fname}: {e}")
+                st["status"] = f"Parsing Failed: {str(e)}"
+                new_issues += 1
+        else:
+            new_issues += 1
+            
+        statuses[fname] = st
+        results.append({"id": st["id"], "fileName": fname, "status": st["status"]})
 
     save_statuses(statuses)
     

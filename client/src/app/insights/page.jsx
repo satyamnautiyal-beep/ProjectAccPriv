@@ -74,7 +74,7 @@ export default function InsightsPage() {
             <div className={styles.cardHeader}>
               <h2 className={styles.cardTitle}>Enrollment Trend</h2>
             </div>
-            <div style={{flex: 1, padding: 'var(--space-4)'}}>
+            <div style={{flex: 1, padding: 'var(--space-4)', width: '100%', height: '300px'}}>
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <defs>
@@ -104,7 +104,7 @@ export default function InsightsPage() {
             <div className={styles.cardHeader}>
               <h2 className={styles.cardTitle}>Clarification Trend</h2>
             </div>
-            <div style={{flex: 1, padding: 'var(--space-4)'}}>
+            <div style={{flex: 1, padding: 'var(--space-4)', width: '100%', height: '300px'}}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
@@ -120,7 +120,7 @@ export default function InsightsPage() {
 
         <Annotation
           title="Processing Efficiency"
-          what="Line chart tracking the automation percentage."
+           what="Line chart tracking the automation percentage."
           why="Highlights overall ROI of the Agentic AI platform."
           how="Demonstrates how many users flow through the system cleanly without touching human hands."
         >
@@ -128,7 +128,7 @@ export default function InsightsPage() {
             <div className={styles.cardHeader}>
               <h2 className={styles.cardTitle}>Processing Efficiency (%)</h2>
             </div>
-            <div style={{flex: 1, padding: 'var(--space-4)'}}>
+            <div style={{flex: 1, padding: 'var(--space-4)', width: '100%', height: '300px'}}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />

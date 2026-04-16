@@ -7,18 +7,19 @@ router = APIRouter(prefix="/api")
 
 @router.get("/metrics")
 def get_metrics():
-    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    target_dir = os.path.join(DATA_DIR, today_str)
-    filesToday = sum(1 for f in os.listdir(target_dir) if f.endswith('.edi')) if os.path.exists(target_dir) else 0
+    from server.routers.files import get_statuses
+    statuses = get_statuses()
+    filesToday = len(statuses)
 
-    from server.routers.members import read_members
+    from server.routers.members import get_members
     from server.routers.clarifications import read_clarifications
-    members = read_members()
+    members = get_members()
     clarifications = read_clarifications()
 
     membersIdentified = len(members)
     readyCount = sum(1 for m in members if m.get("status") == "Ready")
-    pendingCount = sum(1 for m in members if m.get("status") in ["Needs Clarification", "Awaiting Input", "Under Review"])
+    triageCount = sum(1 for m in members if m.get("status") == "Awaiting Clarification")
+    pendingCount = sum(1 for m in members if m.get("status") in ["Pending Business Validation", "Under Review", "Pending"])
     blockedCount = sum(1 for m in members if m.get("status") == "Cannot Process")
     awaitingClarification = sum(1 for c in clarifications if c.get("status") != "Resolved")
 
@@ -27,11 +28,16 @@ def get_metrics():
             "filesToday": filesToday,
             "membersIdentified": membersIdentified,
             "readyCount": readyCount,
-            "pendingCount": pendingCount,
+            "pendingCount": pendingCount + triageCount,
             "blockedCount": blockedCount,
             "awaitingClarification": awaitingClarification,
             "inProgressBatches": 0,
             "completedBatches": 0
         },
-        "pieData": []
+        "pieData": [
+            {"name": "Ready", "value": readyCount, "color": "#22c55e"},
+            {"name": "Pending", "value": pendingCount, "color": "#3b82f6"},
+            {"name": "Awaiting Clarification", "value": triageCount, "color": "#f59e0b"},
+            {"name": "Blocked", "value": blockedCount, "color": "#ef4444"}
+        ]
     }

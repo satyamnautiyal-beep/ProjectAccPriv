@@ -1,124 +1,55 @@
 orchestrator:
   agent_list:
-    - agent_name : "New Enrollment Intake Agent"
-    - agent_name : "Renewal & Retro Enrollment Agent"
-    - agent_name : "Reinstatement & Member Change Agent"
-    - agent_name : "Member Preference Setup Agent"
-    - agent_name : "Recon Agent"
-    - agent_name : "Member Fulfillment Agent"
+    - agent_name : "New Enrollment Intake Orchestrator"
 
 super_agents:
   - agent_class: FlowSuperAgent
-    agent_name: "New Enrollment Intake Agent"
-    agent_description: "Handles enrollments with real‑time validation, duplicate checks & CMS/Exchange submission.​"
+    agent_name: "New Enrollment Intake Orchestrator"
+    agent_description: "Top-level orchestrator for member intake, handling both OEP and SEP lifecycles."
     config:
-      goal: "Generate investment recommendations based on stock research, trends, financial reports, and public expectations."
-
+      goal: "Process new enrollments, ensuring document verification for SEP cases."
       agent_list:
-        - agent_name: "Stock Price Researcher"
+        - agent_name: "Enrollment Triage Agent"
           next_step:
-            - "Stock Trend Researcher"
-            - "Stock Influence Researcher"
-            - "Financial Report Writer"
+            - "SEP Validation Sub-Agent"
+            - "OEP Standard Agent"
 
-        - agent_name: "Stock Trend Researcher"
-          next_step:
-            - "Public Expectation Writer"
+        - agent_name: "SEP Validation Sub-Agent"
+          agent_class: FlowSuperAgent # Nested super agent for modular flow
+          config:
+            agent_list:
+              - agent_name: "GCP Document Retrieval Agent"
+                next_step: ["Doc Analysis Agent"]
+              - agent_name: "Doc Analysis Agent"
+                next_step: ["Compliance Decision Agent"]
+              - agent_name: "Compliance Decision Agent"
 
-        - agent_name: "Stock Influence Researcher"
-          next_step:
-            - "Investment Suggestion Writer"
+        - agent_name: "OEP Standard Agent"
+          next_step: ["Completion Agent"]
 
-        - agent_name: "Corporate Finance Researcher"
-          next_step:
-            - "Financial Report Writer"
-
-        - agent_name: "Financial Report Writer"
-          next_step:
-            - "Investment Suggestion Writer"
-            - "Stock Influence Researcher"
-
-        - agent_name: "Public Expectation Writer"
-          next_step:
-            - "Investment Suggestion Writer"
-
-        - agent_name: "Investment Suggestion Writer"
-
-  - agent_class : FlowSuperAgent
-    agent_name : "Renewal & Retro Enrollment Agent"
-    agent_description : "Processes renewals and retro updates with continuity checks and routing.​"
-
-  - agent_class : FlowSuperAgent
-    agent_name : "Reinstatement & Member Change Agent"
-    agent_description : "Restores coverage after lapse and processes member profile and benefit updates.​"
-
-  - agent_class : FlowSuperAgent
-    agent_name : "Member Preference Setup Agent"
-    agent_description : "Captures & applies language, communication, accessibility & billing preferences.​"
-  
-  - agent_class : FlowSuperAgent
-    agent_name : "Recon Agent"
-    agent_description : "Detects mismatches/duplicates and generates audit ready reconciliation outputs.​"
-  
-  - agent_class : FlowSuperAgent
-    agent_name : "Member Fulfillment Agent"
-    agent_description : "Triggers generation, delivery & and tracking of ID cards, directories, etc. for member ‘Welcome Kit’​"
+        - agent_name: "Completion Agent"
 
 utility_agents:
-  - agent_class: SearchAgent
-    agent_name: "Stock Price Researcher"
-    agent_description: "Search stock price movements."
+  - agent_class: CustomAgent
+    agent_name: "Enrollment Triage Agent"
+    agent_description: "Routes cases based on enrollment period dates."
 
-  - agent_class: SearchAgent
-    agent_name: "Stock Trend Researcher"
-    agent_description: "Research stock market trends."
+  - agent_class: CustomAgent
+    agent_name: "GCP Document Retrieval Agent"
+    agent_description: "Fetches supporting PDFs from Google Cloud Storage."
 
-  - agent_class: SearchAgent
-    agent_name: "Stock Influence Researcher"
-    agent_description: "Search factors influencing stock prices."
-
-  - agent_class: SearchAgent
-    agent_name: "Corporate Finance Researcher"
-    agent_description: "Research corporate finance and financial reports."
+  - agent_class: CustomAgent
+    agent_name: "Doc Analysis Agent"
+    agent_description: "Summarizes and extracts event details from documents via Vision/DocAI."
 
   - agent_class: AuthorAgent
-    agent_name: "Public Expectation Writer"
-    agent_description: "Summarize public expectations based on stock trends."
-    config:
-      memory_attribute_key: "investment_analysis"
-      title: "Investment Analysis Report"
-      leading_questions:
-        - question: "How do recent stock market trends reflect public sentiment and expectations for future price movements?"
-          prompt: "Analyze the latest stock market trends and explain how they influence public perception of future price changes."
-        - question: "What common themes emerge from stock trends that indicate investor confidence or concern?"
-          prompt: "Identify key patterns in stock trends that signal investor sentiment. Are there recurring indicators of optimism or fear?"
-        - question: "Are there any major economic or geopolitical events influencing public expectations in the market?"
-          prompt: "List significant events (economic, political, or industry-specific) that have recently shaped public expectations in stock investments."
+    agent_name: "Compliance Decision Agent"
+    agent_description: "Compares document summaries against EDI reason codes."
 
-  - agent_class: AuthorAgent
-    agent_name: "Financial Report Writer"
-    agent_description: "Write financial summaries based on corporate finance research."
-    config:
-      memory_attribute_key: "investment_analysis"
-      title: "Investment Analysis Report"
-      leading_questions:
-        - question: "What are the key takeaways from the latest corporate financial reports, and how do they compare with industry benchmarks?"
-          prompt: "Summarize the most important points from the latest financial reports, including performance metrics and comparisons with industry standards."
-        - question: "How have recent earnings reports and balance sheet disclosures influenced investor sentiment?"
-          prompt: "Explain how recent earnings reports and balance sheets have impacted investor confidence, referencing key financial indicators."
-        - question: "Are there any financial indicators or metrics that stand out in the companies under research?"
-          prompt: "Highlight notable financial metrics from corporate reports that could be useful in making investment decisions."
+  - agent_class: CustomAgent
+    agent_name: "OEP Standard Agent"
+    agent_description: "Processes standard OEP intake."
 
-  - agent_class: AuthorAgent
-    agent_name: "Investment Suggestion Writer"
-    agent_description: "Generate insights based on stock research and financial reports."
-    config:
-      memory_attribute_key: "investment_analysis"
-      title: "Investment Analysis Report"
-      leading_questions:
-        - question: "Which stock or company is being analyzed for investment considerations?"
-          prompt: "Identify the stock or company mentioned in the conversation history. Provide context on why it is being analyzed, referencing relevant past discussions or queries."
-        - question: "What are the key insights from stock trends, financial reports, and market sentiment?"
-          prompt: "Analyze stock price movements, market trends, corporate financial reports, and investor sentiment. Identify significant patterns and factors affecting the stock’s performance."
-        - question: "Based on the analysis, should investors consider buying, selling, or holding this stock?"
-          prompt: "Evaluate the stock's current valuation, market trends, financial stability, and risk factors. Provide a single, definitive investment decision on whether investors should buy, sell, or hold."
+  - agent_class: CustomAgent
+    agent_name: "Completion Agent"
+    agent_description: "Finalizes the member record and triggers downstream systems."

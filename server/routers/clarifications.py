@@ -35,13 +35,14 @@ def update_clarification(update: ClarificationUpdate):
             if c["status"] == 'Awaiting Response':
                 c["status"] = 'Resolved'
                 # Mutate member back to ready
-                from server.routers.members import read_members, write_members
-                members = read_members()
-                for m in members:
-                    if m["id"] == c["memberId"]:
-                        m["status"] = 'Ready'
-                        m["needsClarification"] = False
-                write_members(members)
+                # Mutate member back to ready in MongoDB
+                from db.mongo_connection import get_database
+                db = get_database()
+                if db is not None:
+                    db.members.update_one(
+                        {"subscriber_id": c["memberId"]},
+                        {"$set": {"status": "Ready"}}
+                    )
                 write_clarifications(claris)
                 return {"success": True}
     raise HTTPException(status_code=400, detail="Clarification not found")

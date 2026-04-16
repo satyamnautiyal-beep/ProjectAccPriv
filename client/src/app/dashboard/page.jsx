@@ -142,7 +142,7 @@ export default function DashboardPage() {
             <div className={styles.cardHeader}>
               <h2 className={styles.cardTitle}>Member Status</h2>
             </div>
-            <div style={{flex: 1, padding: 'var(--space-4)', display: 'flex', justifyContent: 'center', alignItems: 'center'}}>
+            <div style={{flex: 1, padding: 'var(--space-4)', width: '100%', height: '300px', display: 'flex', justifyContent: 'center', alignItems: 'center'}}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie

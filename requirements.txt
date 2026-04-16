@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+mysql-connector-python
+pydantic
+airefinery-sdk
+pyx12
+pymongo
+google-cloud-storage
+xmltodict
