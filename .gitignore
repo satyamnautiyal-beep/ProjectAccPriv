@@ -17,10 +17,9 @@ parsed_data/
 
 # --- Synthetic Data ---
 # Exclude unzipped synthetic folders/files
-synthetic_data/*/
-synthetic_data/edi_data
+test_data/
 # Ensure zip samples ARE tracked
-!synthetic_data/*.zip
+!test_data/zips/*
 
 # --- Frontend & React ---
 node_modules/

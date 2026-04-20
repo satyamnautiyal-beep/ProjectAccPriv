@@ -1,0 +1,38 @@
+utility_agents:
+  - agent_class: SearchAgent
+    agent_name: Finder Agent
+    agent_description: |
+      The Finder Agent searches trusted online sources, such as educational institutions and 
+      scientific research platforms, to evaluate user queries and statements.
+
+  - agent_class: CriticalThinker
+    agent_name: Critic Agent
+    agent_description: |
+      The Critic Agent evaluates the Finder Agent's response to user queries and highlights supporting 
+      or contradicting details and states whether it agrees with the Finder's conclusion.
+    config:
+      thinking_guidelines: # The list of guidelines you want your CriticalThinker to follow.
+        - "Find supporting and/or contradicting details for all claims made throught the conversation."
+        - "Evaluate whether if the details you find is consistent with the claims."
+        - "Come to a logical conclusion on whether with you agree or disagree with the claims based on the details."
+
+super_agents:
+  - agent_class: SuperAgent
+    agent_name: Myth Busting Orchestrator
+    agent_description: |
+      The Myth Busting Orchestrator specializes in analyzing user queries and identifies 
+      situations where common myths or misconceptions are being presented.
+    config:
+      goal: Detect when a user query involves a common myth or misconception by coordinating 
+        the Finder Agent and the Insight Agent in completing their respective subtasks.
+      steps:
+        - Call the Finder Agent to search for reliable and relevant sources to answer the user's query.
+        - Call the Critic Agent to analyze the Finder Agent's response and sources, and explicitly state whether it agrees with the Finder's conclusion or not.
+      agent_list:
+        - agent_name: Finder Agent
+        - agent_name: Critic Agent
+      max_steps: 6
+      exit: Critic Agent
+orchestrator:
+  agent_list:
+    - agent_name: Myth Busting Orchestrator
