@@ -1,0 +1,62 @@
+{
+  "subscriber_id": "EMPTEST0006",
+  "history": {
+    "2026-04-01": {
+      "_is_sub": true,
+      "member_info": {
+        "subscriber_indicator": "Y",
+        "relationship_code": "18",
+        "employment_status": "030",
+        "subscriber_id": "EMPTEST0006",
+        "first_name": "Farah",
+        "last_name": "Khan",
+        "ssn": "9100000606",
+        "dob": "1993-03-17",
+        "gender": "F",
+        "address_line_1": "44 PARK STREET",
+        "city": "Kolkata",
+        "state": "WB",
+        "zip": "700016",
+        "employer_name": "ABC CORPORATION",
+        "employer_id": "123456789",
+        "insurer_name": "ABC HEALTH INSURANCE",
+        "insurer_id": "987654321"
+      },
+      "coverages": [
+        { "coverage_type": "030", "plan_code": "HLT", "coverage_start_date": "2026-04-01" }
+      ],
+      "dependents": [],
+      "subscriber_id": "EMPTEST0006",
+      "status": "Validated"
+    },
+    "2026-05-01": {
+      "_is_sub": true,
+      "member_info": {
+        "subscriber_indicator": "Y",
+        "relationship_code": "18",
+        "employment_status": "030",
+        "subscriber_id": "EMPTEST0006",
+        "first_name": "Farah",
+        "last_name": "Khan",
+        "ssn": "9100000606",
+        "dob": "1993-03-17",
+        "gender": "F",
+        "address_line_1": "44 PARK STREET",
+        "city": "Kolkata",
+        "state": "WB",
+        "zip": "700016",
+        "employer_name": "ABC CORPORATION",
+        "employer_id": "123456789",
+        "insurer_name": "ABC HEALTH INSURANCE",
+        "insurer_id": "987654321"
+      },
+      "coverages": [],
+      "dependents": [],
+      "subscriber_id": "EMPTEST0006",
+      "status": "Terminated"
+    }
+  },
+  "latest_update": "2026-05-01",
+  "status": "Ready",
+  "validation_issues": []
+}

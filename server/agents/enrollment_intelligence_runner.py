@@ -1,0 +1,763 @@
+import asyncio
+import copy
+import hashlib
+import json
+import os
+from datetime import datetime, timezone, date
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from dotenv import load_dotenv
+from air import AsyncAIRefinery
+
+
+def orchestrate_enrollment(record: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Sync wrapper for process_record. Used by FastAPI router endpoints.
+    Sanitizes input, runs EnrollmentRouterAgent via Distiller, returns analysis.
+    """
+    return asyncio.run(process_record(record, persist=False))
+
+
+# -----------------------------------
+# ENV + CONFIG
+# -----------------------------------
+load_dotenv()
+
+PROJECT_NAME = "enrollment_intelligence"
+CONFIG_PATH = (Path(__file__).resolve().parent / "config.yaml").resolve()
+_HASH_CACHE = Path(__file__).resolve().parent / ".enrollment_intelligence_project_version"
+
+# Mongo (optional - used only if persist=True in process_record/process_records_batch)
+MONGO_URI = os.getenv("MONGO_URI", "")
+MONGO_DB = os.getenv("MONGO_DB_NAME", "health_enroll")
+MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "members")
+
+DEFAULT_ENROLLMENT_SOURCE = os.getenv("DEFAULT_ENROLLMENT_SOURCE", "Employer")
+
+# OEP CONFIG (ENV-DRIVEN)
+OEP_START_DATE = os.getenv("OEP_START_DATE")  # YYYY-MM-DD
+OEP_END_DATE = os.getenv("OEP_END_DATE")      # YYYY-MM-DD
+
+
+# -----------------------------------
+# PROJECT LIFECYCLE
+# -----------------------------------
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _ensure_project(client: AsyncAIRefinery) -> None:
+    """
+    Create/refresh the Distiller project only when config.yaml changes.
+    """
+    if not CONFIG_PATH.exists():
+        raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
+
+    new_hash = _sha256_file(CONFIG_PATH)
+    old_hash = _HASH_CACHE.read_text().strip() if _HASH_CACHE.exists() else ""
+
+    if new_hash != old_hash:
+        is_valid = client.distiller.validate_config(config_path=str(CONFIG_PATH))
+        if not is_valid:
+            raise ValueError(f"AI Refinery rejected config: {CONFIG_PATH}")
+
+        client.distiller.create_project(
+            config_path=str(CONFIG_PATH),
+            project=PROJECT_NAME
+        )
+        _HASH_CACHE.write_text(new_hash)
+
+
+def create_client() -> AsyncAIRefinery:
+    api_key = os.getenv("AI_REFINERY_KEY") or os.getenv("AI_REFINERY_API_KEY") or os.getenv("API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing AI_REFINERY_KEY / AI_REFINERY_API_KEY / API_KEY")
+
+    client = AsyncAIRefinery(api_key=api_key)
+    _ensure_project(client)
+    return client
+
+
+# -----------------------------------
+# HELPERS
+# -----------------------------------
+def _sorted_history_dates(record: Dict[str, Any]) -> List[str]:
+    return sorted((record.get("history") or {}).keys())
+
+
+def _get_latest_two_snapshots(
+    record: Dict[str, Any]
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], List[str]]:
+    dates = _sorted_history_dates(record)
+    if len(dates) == 0:
+        return None, None, dates
+    if len(dates) == 1:
+        return record["history"][dates[-1]], None, dates
+    return record["history"][dates[-1]], record["history"][dates[-2]], dates
+
+
+def _deep_diff(a: Any, b: Any, path: str = "") -> List[Dict[str, Any]]:
+    diffs: List[Dict[str, Any]] = []
+
+    if type(a) != type(b):
+        diffs.append({"path": path, "from": a, "to": b, "type": "type_change"})
+        return diffs
+
+    if isinstance(a, dict):
+        keys = set(a.keys()) | set(b.keys())
+        for k in sorted(keys):
+            p = f"{path}.{k}" if path else k
+            if k not in a:
+                diffs.append({"path": p, "from": None, "to": b[k], "type": "added"})
+            elif k not in b:
+                diffs.append({"path": p, "from": a[k], "to": None, "type": "removed"})
+            else:
+                diffs.extend(_deep_diff(a[k], b[k], p))
+        return diffs
+
+    if isinstance(a, list):
+        if a != b:
+            diffs.append({"path": path, "from": a, "to": b, "type": "list_changed"})
+        return diffs
+
+    if a != b:
+        diffs.append({"path": path, "from": a, "to": b, "type": "value_changed"})
+    return diffs
+
+
+def _utc_now_z() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# ✅ DATE / OEP HELPERS
+def _parse_date(d: Optional[str]) -> Optional[date]:
+    if not d:
+        return None
+    return datetime.strptime(d, "%Y-%m-%d").date()
+
+
+def is_within_oep(today: date) -> Optional[bool]:
+    """
+    True  -> within OEP
+    False -> outside OEP
+    None  -> OEP not configured
+    """
+    start = _parse_date(OEP_START_DATE)
+    end = _parse_date(OEP_END_DATE)
+    if not start or not end:
+        return None
+    return start <= today <= end
+
+
+# -----------------------------------
+# ✅ Step A: THIN ENGINE INPUT (sanitize before Distiller)
+# -----------------------------------
+def build_engine_input(record: dict) -> dict:
+    """
+    Removes Mongo _id and strips PII (ssn, dob) from subscriber + dependents
+    before sending to Distiller. Zero agent changes. Immediate risk reduction.
+    """
+    r = copy.deepcopy(record)
+
+    # Remove Mongo internal id (ObjectId or {"$oid": "..."} export)
+    r.pop("_id", None)
+
+    history = r.get("history") or {}
+    for _, snap in history.items():
+        # subscriber PII
+        mi = snap.get("member_info") or {}
+        mi.pop("ssn", None)
+        mi.pop("dob", None)
+
+        # dependents PII
+        for dep in (snap.get("dependents") or []):
+            dmi = dep.get("member_info") or {}
+            dmi.pop("ssn", None)
+            dmi.pop("dob", None)
+
+    return r
+
+
+# -----------------------------------
+# ✅ Step B: STAGE-SPECIFIC VIEWS
+# -----------------------------------
+def _history_last_two_view(history: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Returns a history dict containing only the latest 2 snapshot dates.
+    Keeps date keys as strings.
+    """
+    if not history:
+        return {}
+    dates = sorted(history.keys())
+    if len(dates) <= 2:
+        return {d: history[d] for d in dates}
+    return {dates[-2]: history[dates[-2]], dates[-1]: history[dates[-1]]}
+
+
+def _classification_view(record: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Classifier only needs subscriber_id + last two snapshots.
+    """
+    history = record.get("history") or {}
+    return {
+        "subscriber_id": record.get("subscriber_id"),
+        "history": _history_last_two_view(history),
+    }
+
+
+def _sep_inference_view(record: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    SEP inference only needs last two snapshots too (dependents + member_info changes).
+    """
+    history = record.get("history") or {}
+    return {
+        "subscriber_id": record.get("subscriber_id"),
+        "history": _history_last_two_view(history),
+    }
+
+
+def _normal_flow_view(record: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normal flow produces timeline; it needs the full history (but still sanitized by build_engine_input).
+    """
+    return {
+        "subscriber_id": record.get("subscriber_id"),
+        "history": record.get("history") or {},
+    }
+
+
+def _decision_view(record: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Decision needs minimal root flags + last snapshot status (from last 2 snapshots).
+    """
+    history = record.get("history") or {}
+    return {
+        "subscriber_id": record.get("subscriber_id"),
+        "status": record.get("status"),
+        "validation_issues": record.get("validation_issues") or [],
+        "history": _history_last_two_view(history),
+    }
+
+
+# -----------------------------------
+# MONGO PERSIST (optional)
+# -----------------------------------
+def mongo_update(subscriber_id: str, root_status: str, agent_analysis: Dict[str, Any]) -> None:
+    if not MONGO_URI:
+        return
+    from pymongo import MongoClient
+    client = MongoClient(MONGO_URI)
+    col = client[MONGO_DB][MONGO_COLLECTION]
+    col.update_one(
+        {"subscriber_id": subscriber_id},
+        {"$set": {"status": root_status, "agent_analysis": agent_analysis}},
+        upsert=False,
+    )
+
+
+# ============================================================
+#  UTILITY AGENTS + ROUTER
+# ============================================================
+async def EnrollmentClassifierAgent(query: str, **kwargs) -> str:
+    record = json.loads(query)
+    latest, prev, dates = _get_latest_two_snapshots(record)
+
+    today = datetime.now(timezone.utc).date()
+    within_oep = is_within_oep(today)
+
+    enrollment_type = "Maintenance"
+    subtype = "Unknown"
+    sep_candidate = False
+    sep_required = False
+    confidence = "medium"
+    reasons: List[str] = []
+
+    if not latest:
+        return json.dumps({
+            "enrollment_type": "Unknown",
+            "subtype": "NoSnapshots",
+            "sep_candidate": False,
+            "sep_required": False,
+            "is_within_oep": within_oep,
+            "confidence": "low",
+            "reasons": ["no_history_snapshots"],
+            "history_dates": dates
+        })
+
+    latest_status = latest.get("status") or ""
+
+    if "Terminated" in latest_status:
+        enrollment_type = "Termination"
+        subtype = "CoverageEnd"
+        confidence = "high"
+        reasons.append("latest_status_terminated")
+
+    elif "Reinstated" in latest_status:
+        enrollment_type = "Reinstatement"
+        subtype = "CoverageReactivated"
+        confidence = "high"
+        reasons.append("latest_status_reinstated")
+
+    if prev:
+        diffs = _deep_diff(prev, latest)
+
+        addr_changed = any(
+            any(k in d["path"] for k in ["address_line_1", "city", "state", "zip"])
+            for d in diffs
+        )
+        dep_changed = any("dependents" in d["path"] for d in diffs)
+
+        if addr_changed:
+            sep_candidate = True
+            subtype = "AddressChange"
+            reasons.append("address_changed")
+
+        if dep_changed:
+            sep_candidate = True
+            subtype = "HouseholdChange"
+            reasons.append("dependents_changed")
+
+        if sep_candidate:
+            if within_oep is False:
+                sep_required = True
+                reasons.append("outside_oep_sep_required")
+            elif within_oep is True:
+                sep_required = False
+                reasons.append("within_oep_sep_not_required")
+
+    return json.dumps({
+        "enrollment_type": enrollment_type,
+        "subtype": subtype,
+        "sep_candidate": sep_candidate,
+        "sep_required": sep_required,
+        "is_within_oep": within_oep,
+        "confidence": confidence,
+        "reasons": reasons,
+        "history_dates": dates
+    })
+
+
+async def SepInferenceAgent(query: str, **kwargs) -> str:
+    payload = json.loads(query)
+    record = payload["record"]
+    classification = payload["classification"]
+
+    latest, prev, dates = _get_latest_two_snapshots(record)
+    candidates = []
+
+    if prev and latest:
+        prev_deps = prev.get("dependents", []) or []
+        latest_deps = latest.get("dependents", []) or []
+        if len(prev_deps) != len(latest_deps):
+            candidates.append({
+                "sep_candidate": "Household change (marriage/birth/adoption/divorce)",
+                "confidence": 0.75,
+                "supporting_signals": ["dependents_count_changed"]
+            })
+
+        p = prev.get("member_info", {}) or {}
+        l = latest.get("member_info", {}) or {}
+        if any(p.get(k) != l.get(k) for k in ["address_line_1", "city", "state", "zip"]):
+            candidates.append({
+                "sep_candidate": "Permanent move / relocation",
+                "confidence": 0.70,
+                "supporting_signals": ["address_fields_changed"]
+            })
+
+        diffs = _deep_diff(prev, latest)
+        non_status = [d for d in diffs if not d["path"].endswith(".status") and d["path"] != "status"]
+        if len(non_status) == 0:
+            candidates.append({
+                "sep_candidate": "Administrative resend/correction (Exchange/Employer reprocessing)",
+                "confidence": 0.85,
+                "supporting_signals": ["status_only_or_no_change"]
+            })
+
+    if not candidates:
+        candidates.append({
+            "sep_candidate": "Unknown / insufficient signals",
+            "confidence": 0.30,
+            "supporting_signals": ["no_strong_change_signals_found"]
+        })
+
+    candidates = sorted(candidates, key=lambda x: x["confidence"], reverse=True)
+    top = candidates[0]
+    sep_confirmed = top["confidence"] >= 0.70 and top["sep_candidate"] != "Unknown / insufficient signals"
+
+    return json.dumps({
+        "sep_confirmed": sep_confirmed,
+        "sep_causality": top,
+        "other_candidates": candidates[1:],
+        "note": "Causality inference, not eligibility approval/denial.",
+        "classification_used": {
+            "enrollment_type": classification.get("enrollment_type"),
+            "subtype": classification.get("subtype"),
+            "sep_candidate": classification.get("sep_candidate")
+        }
+    })
+
+
+async def NormalEnrollmentAgent(query: str, **kwargs) -> str:
+    payload = json.loads(query)
+    record = payload["record"]
+    classification = payload["classification"]
+
+    history = record.get("history", {}) or {}
+    timeline_rows = []
+    effective_dates: List[str] = []
+
+    for d in _sorted_history_dates(record):
+        snap = history[d]
+        covs = snap.get("coverages", []) or []
+        deps = snap.get("dependents", []) or []
+        member = snap.get("member_info", {}) or {}
+
+        cov_start_dates = [c.get("coverage_start_date") for c in covs]
+        for ed in cov_start_dates:
+            if ed:
+                effective_dates.append(ed)
+
+        timeline_rows.append({
+            "snapshot_date": d,
+            "snapshot_status": snap.get("status"),
+            "coverage_start_dates": cov_start_dates,
+            "plan_codes": [c.get("plan_code") for c in covs],
+            "city": member.get("city"),
+            "state": member.get("state"),
+            "dependents_count": len(deps),
+        })
+
+    return json.dumps({
+        "normal_flow_summary": {
+            "enrollment_type": classification.get("enrollment_type"),
+            "subtype": classification.get("subtype"),
+            "notes": "Processed via normal flow; SEP inference skipped."
+        },
+        "timeline": {
+            "history_dates": _sorted_history_dates(record),
+            "timeline": timeline_rows,
+            "observations": {
+                "distinct_effective_dates": sorted(set([x for x in effective_dates if x])),
+                "snapshot_count": len(timeline_rows)
+            }
+        }
+    })
+
+
+async def DecisionAgent(query: str, **kwargs) -> str:
+    payload = json.loads(query)
+    record = payload["record"]
+    classification = payload["classification"]
+    analysis = payload["analysis"]
+
+    latest, prev, dates = _get_latest_two_snapshots(record)
+
+    latest_snapshot_status = (latest or {}).get("status")
+    root_status_current = record.get("status")
+    validation_issues = record.get("validation_issues", []) or []
+
+    risk = {"level": "Low", "reasons": []}
+    root_status_recommended = "Ready"
+
+    if validation_issues:
+        risk["level"] = "High"
+        risk["reasons"].append("validation_issues_present")
+        root_status_recommended = "In Review"
+
+    BLOCKING_ROOT_STATUSES = {
+        "Pending Business Validation",
+        "Clarification Required",
+        "Processing Failed",
+    }
+    if str(root_status_current) in BLOCKING_ROOT_STATUSES:
+        risk["reasons"].append(f"root_status_blocks:{root_status_current}")
+        root_status_recommended = "In Review"
+
+    if analysis.get("sep_confirmed") is True:
+        risk["reasons"].append("sep_confirmed_requires_evidence")
+        root_status_recommended = "In Review"
+
+    return json.dumps({
+        "root_status_current": root_status_current,
+        "root_status_recommended": root_status_recommended,
+        "agent_analysis_patch": {
+            "generated_at": _utc_now_z(),
+            "latest_snapshot_date": dates[-1] if dates else None,
+            "latest_snapshot_status": latest_snapshot_status,
+            "risk": risk,
+            "classification": classification,
+            "analysis_used": analysis,
+            "explain": "Decision is deterministic aggregation; SEP confirmed triggers review unless evidence checks are added."
+        }
+    })
+
+async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
+    """
+    ✅ Stage-specific routing:
+      - classify uses last 2 snapshots only
+      - sep inference uses last 2 snapshots only
+      - normal flow uses full history
+      - decision uses minimal root flags + last 2 snapshots
+    """
+    try:
+        full_record = build_engine_input(json.loads(query))   # this is already sanitized by build_engine_input()
+        subscriber_id = full_record.get("subscriber_id")
+
+        if not (full_record.get("history") or {}):
+            return json.dumps({
+                "subscriber_id": subscriber_id,
+                "root_status_recommended": "In Review",
+                "agent_analysis": {"error": "No history snapshots found", "history_dates": []}
+            })
+
+        # ---- 1) Classification (thin view)
+        classification_record = _classification_view(full_record)
+        classification = json.loads(await EnrollmentClassifierAgent(json.dumps(classification_record)))
+
+        # ---- 2) Branch analysis (thin view depending on branch)
+        if classification.get("sep_candidate"):
+            sep_record = _sep_inference_view(full_record)
+            branch_payload = json.dumps({"record": sep_record, "classification": classification})
+            branch_analysis = json.loads(await SepInferenceAgent(branch_payload))
+        else:
+            normal_record = _normal_flow_view(full_record)
+            branch_payload = json.dumps({"record": normal_record, "classification": classification})
+            branch_analysis = json.loads(await NormalEnrollmentAgent(branch_payload))
+
+        # ---- 3) Authority analysis (uses only source_system)
+        source = full_record.get("source_system") or DEFAULT_ENROLLMENT_SOURCE
+        payer_discretion = False if source in ["Exchange", "CMS", "FFE", "SBE"] else True
+        authority = {
+            "authority_analysis": {
+                "source": source,
+                "payer_discretion": payer_discretion,
+                "notes": "Add EDI envelope sender/receiver IDs to Mongo for deterministic classification."
+            }
+        }
+
+        # ---- 4) Decision (tiny view)
+        decision_record = _decision_view(full_record)
+        decision_payload = json.dumps({
+            "record": decision_record,
+            "classification": classification,
+            "analysis": branch_analysis
+        })
+        decision = json.loads(await DecisionAgent(decision_payload))
+        root_status_recommended = decision.get("root_status_recommended", "In Review")
+
+        # ---- 5) Diff explainability (OPTIONAL but useful)
+        # For diff we only need last 2 snapshots; use classification_record (already last2)
+        latest, prev, dates = _get_latest_two_snapshots(classification_record)
+        if prev is None:
+            diff = {
+                "history_dates": dates,
+                "diff": [],
+                "semantic_flags": ["first_snapshot_only"],
+                "notes": "Only one snapshot exists; nothing to diff yet."
+            }
+        else:
+            raw_diffs = _deep_diff(prev, latest)
+            flags = []
+            if len(raw_diffs) == 0:
+                flags.append("exact_resend_or_duplicate")
+            else:
+                non_status = [d for d in raw_diffs if not d["path"].endswith(".status") and d["path"] != "status"]
+                if len(non_status) == 0:
+                    flags.append("status_only_change")
+                if any("dependents" in d["path"] for d in raw_diffs):
+                    flags.append("household_structure_change")
+                if any("coverages" in d["path"] for d in raw_diffs):
+                    flags.append("coverage_change")
+
+            diff = {
+                "history_dates": dates,
+                "latest_date": dates[-1] if dates else None,
+                "previous_date": dates[-2] if len(dates) >= 2 else None,
+                "diff": raw_diffs,
+                "semantic_flags": flags
+            }
+
+        agent_analysis = {
+            "diff": diff,
+            "classification": classification,
+            "branch_analysis": branch_analysis,
+            "authority": authority,
+            "decision": decision
+        }
+
+        return json.dumps({
+            "subscriber_id": subscriber_id,
+            "root_status_recommended": root_status_recommended,
+            "agent_analysis": agent_analysis
+        })
+
+    except Exception as e:
+        return json.dumps({
+            "subscriber_id": None,
+            "root_status_recommended": "In Review",
+            "agent_analysis": {
+                "error": "EnrollmentRouterAgent failed",
+                "exception": type(e).__name__,
+                "message": str(e)
+            }
+        })
+
+
+# -----------------------------------
+# EXECUTOR (ALL AGENTS REGISTERED)
+# -----------------------------------
+executor_dict = {
+    "EnrollmentClassifierAgent": EnrollmentClassifierAgent,
+    "SepInferenceAgent": SepInferenceAgent,
+    "NormalEnrollmentAgent": NormalEnrollmentAgent,
+    "DecisionAgent": DecisionAgent,
+    "EnrollmentRouterAgent": EnrollmentRouterAgent
+}
+
+
+# -----------------------------------
+# DISTILLER STREAM COLLECTOR
+# -----------------------------------
+def _safe_json_dumps(obj: Any) -> str:
+    """
+    Safety: makes any lingering non-JSON types serializable (should be rare if _id removed).
+    """
+    return json.dumps(obj, default=str)
+
+
+async def _collect_distiller_text(responses) -> Tuple[str, List[Any]]:
+    text_parts: List[str] = []
+    errors: List[Any] = []
+    raw_chunks: List[Any] = []
+
+    async for chunk in responses:
+        raw_chunks.append(chunk)
+
+        if hasattr(chunk, "content") and chunk.content:
+            text_parts.append(chunk.content)
+        if hasattr(chunk, "error") and getattr(chunk, "error"):
+            errors.append(getattr(chunk, "error"))
+
+        if isinstance(chunk, dict):
+            if "error" in chunk:
+                errors.append(chunk["error"])
+            if chunk.get("content"):
+                text_parts.append(chunk["content"])
+
+    final_text = "".join(text_parts).strip()
+    if not final_text and not errors:
+        errors.append(f"No content returned. First chunks: {raw_chunks[:3]}")
+    return final_text, errors
+
+
+# -----------------------------------
+# SINGLE RECORD (convenience)
+# -----------------------------------
+async def process_record(record: Dict[str, Any], persist: bool = False) -> Dict[str, Any]:
+    """
+    Single record. Still opens a session per call.
+    Prefer process_records_batch for batch endpoints.
+    """
+    client = create_client()
+    run_uuid = os.getenv("AIREFINERY_UUID", "enrollment_dev_local")
+
+    thin = build_engine_input(record)
+    payload = _safe_json_dumps(thin)
+
+    async with client.distiller(
+        project=PROJECT_NAME,
+        uuid=run_uuid,
+        executor_dict=executor_dict,
+    ) as dc:
+        responses = await dc.query(query=payload)
+        final_text, errors = await _collect_distiller_text(responses)
+
+    if errors:
+        raise RuntimeError(f"Distiller error: {errors}")
+
+    result = json.loads(final_text)
+
+    if persist and result.get("subscriber_id"):
+        mongo_update(
+            subscriber_id=result["subscriber_id"],
+            root_status=result.get("root_status_recommended", "In Review"),
+            agent_analysis=result.get("agent_analysis", {}),
+        )
+
+    return result
+
+
+# -----------------------------------
+# ✅ BATCH PROCESSING (ONE DISTILLER SESSION)
+# -----------------------------------
+async def process_records_batch(
+    records: List[Dict[str, Any]],
+    persist: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Batch processing:
+      - create_client() once
+      - async with client.distiller(...) once
+      - dc.query(...) for each record
+    """
+    client = create_client()
+    run_uuid = os.getenv("AIREFINERY_UUID", "enrollment_dev_local")
+
+    results: List[Dict[str, Any]] = []
+
+    async with client.distiller(
+        project=PROJECT_NAME,
+        uuid=run_uuid,
+        executor_dict=executor_dict,
+    ) as dc:
+        for raw in records:
+            subscriber_id = raw.get("subscriber_id")
+            try:
+                thin = build_engine_input(raw)
+                payload = _safe_json_dumps(thin)
+
+                responses = await dc.query(query=payload)
+                final_text, errors = await _collect_distiller_text(responses)
+
+                if errors:
+                    results.append({
+                        "subscriber_id": subscriber_id,
+                        "root_status_recommended": "In Review",
+                        "agent_analysis": {"error": errors}
+                    })
+                    continue
+
+                parsed = json.loads(final_text)
+
+                if persist and parsed.get("subscriber_id"):
+                    mongo_update(
+                        subscriber_id=parsed["subscriber_id"],
+                        root_status=parsed.get("root_status_recommended", "In Review"),
+                        agent_analysis=parsed.get("agent_analysis", {}),
+                    )
+
+                results.append(parsed)
+
+            except Exception as e:
+                results.append({
+                    "subscriber_id": subscriber_id,
+                    "root_status_recommended": "In Review",
+                    "agent_analysis": {
+                        "error": "process_records_batch failed for record",
+                        "exception": type(e).__name__,
+                        "message": str(e)
+                    }
+                })
+
+    return results
+
+
+# -----------------------------------
+# CLI (optional)
+# -----------------------------------
+if __name__ == "__main__":
+    import sys
+    record = json.loads(sys.stdin.read())
+    out = asyncio.run(process_record(record, persist=False))
+    print(json.dumps(out, indent=2))

@@ -1,0 +1,11 @@
+utility_agents:
+  - agent_class: CustomAgent
+    agent_name: EnrollmentPipelineAgent
+    agent_description: >
+      Executes the full Enrollment Intelligence pipeline on a subscriber record JSON.
+      Returns a single JSON payload containing root_status_recommended + agent_analysis.
+
+orchestrator:
+  agent_list:
+    - agent_name: EnrollmentPipelineAgent
+  enable_routing: false

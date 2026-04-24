@@ -1,0 +1,32 @@
+yaml-schema: knowledge-local
+
+embedding_config:
+  model: "intfloat/e5-mistral-7b-instruct"
+  batch_size: 32
+  max_workers: 2
+
+vectordb_config:
+  type: AzureAISearch
+  base_url: ${oc.env:AZURE_SEARCH_ENDPOINT}
+  api_key: ${oc.env:AZURE_SEARCH_KEY}
+  index: sep-agent-sop
+  api_version: 2023-11-01
+
+  # defaults in SDK docs, listed here explicitly
+  embedding_column: text_vector
+  top_k: 4
+  content_column:
+    - id
+    - text
+    - source
+    - section_index
+  timeout: 60
+
+upload_config:
+  batch_size: 50
+  max_workers: 2
+
+chunking_config:
+  algorithm: SemanticChunking
+  chunk_size: 600
+  overlap_size: 80

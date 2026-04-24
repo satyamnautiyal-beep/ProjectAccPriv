@@ -1,0 +1,64 @@
+{
+  "subscriber_id": "EMPTEST0008",
+  "history": {
+    "2026-04-01": {
+      "_is_sub": true,
+      "member_info": {
+        "subscriber_indicator": "Y",
+        "relationship_code": "18",
+        "employment_status": "030",
+        "subscriber_id": "EMPTEST0008",
+        "first_name": "Rohit",
+        "last_name": "Mehta",
+        "ssn": "9100000808",
+        "dob": "1994-05-05",
+        "gender": "M",
+        "address_line_1": "22 SECTOR 18",
+        "city": "Noida",
+        "state": "UP",
+        "zip": "201301",
+        "employer_name": "ABC CORPORATION",
+        "employer_id": "123456789",
+        "insurer_name": "ABC HEALTH INSURANCE",
+        "insurer_id": "987654321"
+      },
+      "coverages": [
+        { "coverage_type": "030", "plan_code": "HLT", "coverage_start_date": "2026-04-01" }
+      ],
+      "dependents": [],
+      "subscriber_id": "EMPTEST0008",
+      "status": "Validated"
+    },
+    "2026-04-22": {
+      "_is_sub": true,
+      "member_info": {
+        "subscriber_indicator": "Y",
+        "relationship_code": "18",
+        "employment_status": "030",
+        "subscriber_id": "EMPTEST0008",
+        "first_name": "Rohit",
+        "last_name": "Mehta",
+        "ssn": "9100000808",
+        "dob": "1994-05-05",
+        "gender": "M",
+        "address_line_1": "22 SECTOR 18",
+        "city": "Noida",
+        "state": "UP",
+        "zip": "201301",
+        "employer_name": "ABC CORPORATION",
+        "employer_id": "123456789",
+        "insurer_name": "ABC HEALTH INSURANCE",
+        "insurer_id": "987654321"
+      },
+      "coverages": [
+        { "coverage_type": "030", "plan_code": "PRM", "coverage_start_date": "2026-04-01" }
+      ],
+      "dependents": [],
+      "subscriber_id": "EMPTEST0008",
+      "status": "Pending Business Validation"
+    }
+  },
+  "latest_update": "2026-04-22",
+  "status": "Ready",
+  "validation_issues": []
+}

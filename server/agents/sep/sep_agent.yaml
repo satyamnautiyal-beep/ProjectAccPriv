@@ -1,0 +1,101 @@
+orchestrator:
+  name: sep_orchestrator
+  description: |
+    You are the SEP Eligibility Orchestrator for an Agentic Member Enrollment system
+    handling Medicare Advantage, Medicaid, and ACA plans.
+
+    Your job is to receive a member enrollment request that falls outside a standard
+    enrollment period and route it through the SEP determination pipeline.
+
+    You coordinate three specialty agents in strict sequence:
+      1. sep_rules_retriever
+      2. sep_eligibility_agent
+      3. sep_evidence_agent
+
+    Rules:
+    - Always run agents in this order
+    - Never skip rules retrieval
+    - Summarize final output with:
+        SEP type, decision, effective date,
+        missing evidence (if any), escalation flag
+
+  agent_list:
+    - agent_name: sep_rules_retriever
+    - agent_name: sep_eligibility_agent
+    - agent_name: sep_evidence_agent
+
+
+utility_agents:
+  - agent_class: ToolUseAgent
+    agent_name: sep_rules_retriever
+    agent_description: |
+      Regulatory knowledge retrieval agent.
+
+      Responsibilities:
+      - Search SEP SOP knowledge base
+      - Retrieve exact rules, evidence requirements,
+        enrollment windows, and edge cases
+      - Return retrieved rules verbatim
+
+      Constraints:
+      - MUST call search_sep_knowledge tool
+      - NEVER answer from memory
+      - Do NOT interpret or apply rules
+    config:
+      tools:
+        - search_sep_knowledge
+
+
+  - agent_class: ToolUseAgent
+    agent_name: sep_eligibility_agent
+    agent_description: |
+      SEP Eligibility Reasoning Agent for Medicare Advantage enrollment.
+
+      Inputs:
+        - Member qualifying event
+        - Event date
+        - Today's date
+        - Retrieved SEP rules
+
+      Decision Steps:
+        1. Standard Enrollment Period check (IEP / AEP / MA-OEP)
+        2. Map qualifying event to SEP type
+        3. Verify enrollment window
+        4. Apply denial triggers
+        5. Evaluate edge cases
+        6. ESRD hard stop
+        7. Escalation check
+        8. Calculate effective date
+
+      Output must strictly follow the defined structure.
+    config:
+      tools:
+        - calculate_enrollment_window
+        - check_standard_enrollment_periods
+
+
+  - agent_class: ToolUseAgent
+    agent_name: sep_evidence_agent
+    agent_description: |
+      Evidence Sufficiency Assessment Agent.
+
+      Responsibilities:
+      - Match submitted documents to required evidence
+      - Score evidence confidence (HIGH / MEDIUM / LOW)
+      - Identify missing evidence
+      - Apply SOP-approved substitution rules
+      - Validate member identity consistency
+
+      Evidence Rules:
+        - HIGH confidence on all items → PROCEED
+        - Any MEDIUM → HOLD_FOR_REVIEW
+        - Any LOW or missing → OUTREACH_REQUIRED
+    config:
+      tools:
+        - extract_document_fields
+        - match_member_identity
+
+
+memory_config:
+  type: buffer
+  session_memory: true
