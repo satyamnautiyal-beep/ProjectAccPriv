@@ -13,6 +13,11 @@ class BatchRequest(BaseModel):
     batchId: str
 
 
+class ApproveRequest(BaseModel):
+    id: str
+    action: str  # "approve" or "hold"
+
+
 @router.get("/batches")
 def get_batches():
     db = get_database()
@@ -23,7 +28,7 @@ def get_batches():
 
 @router.post("/batches")
 def create_batch():
-    """Bundles all Ready members into a batch."""
+    """Bundles all Ready members into a new batch awaiting approval."""
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -54,8 +59,42 @@ def create_batch():
     return {"success": True, "batchId": batch_id}
 
 
+@router.post("/approve-batch")
+def approve_batch(req: ApproveRequest):
+    """
+    Approval page: approve or hold a batch.
+    approve → status becomes 'Approved' (ready for release-staging to initiate)
+    hold    → status stays 'Awaiting Approval' (no change, just acknowledged)
+    """
+    db = get_database()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    batch = db.batches.find_one({"id": req.id}, {"_id": 0})
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    if req.action == "approve":
+        db.batches.update_one(
+            {"id": req.id},
+            {"$set": {"status": "Approved", "approvedAt": datetime.utcnow().isoformat()}}
+        )
+        return {"success": True, "batchId": req.id, "status": "Approved"}
+
+    elif req.action == "hold":
+        # Hold keeps it in Awaiting Approval — just acknowledge
+        return {"success": True, "batchId": req.id, "status": "Awaiting Approval"}
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {req.action}")
+
+
 @router.post("/initiate-batch")
 async def initiate_batch(req: BatchRequest):
+    """
+    Release Staging page: triggers the AI enrollment pipeline on a batch.
+    Used by the manual workflow (not the chat agent).
+    """
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -72,10 +111,7 @@ async def initiate_batch(req: BatchRequest):
     )
 
     if not members_in_batch:
-        raise HTTPException(
-            status_code=400,
-            detail="No members In Batch for this batch"
-        )
+        raise HTTPException(status_code=400, detail="No members In Batch for this batch")
 
     results = await process_records_batch(members_in_batch, persist=False)
 
@@ -90,11 +126,15 @@ async def initiate_batch(req: BatchRequest):
 
         try:
             root_status = result.get("root_status_recommended", "In Review")
+            valid_statuses = {"Enrolled", "Enrolled (SEP)", "In Review", "Ready", "Awaiting Clarification"}
+            if root_status not in valid_statuses:
+                root_status = "In Review"
 
             db.members.update_one(
                 {"subscriber_id": subscriber_id},
                 {"$set": {
                     "agent_analysis": result.get("agent_analysis", result),
+                    "markers": result.get("markers", {}),
                     "status": root_status,
                     "lastProcessedAt": datetime.utcnow().isoformat(),
                 }}
@@ -111,6 +151,22 @@ async def initiate_batch(req: BatchRequest):
                     "lastProcessedAt": datetime.utcnow().isoformat(),
                 }}
             )
+
+    # Sweep any still-stuck In Batch members
+    stuck = list(db.members.find(
+        {"status": "In Batch", "batch_id": req.batchId},
+        {"_id": 0, "subscriber_id": 1}
+    ))
+    for m in stuck:
+        db.members.update_one(
+            {"subscriber_id": m["subscriber_id"]},
+            {"$set": {
+                "status": "Processing Failed",
+                "processing_error": "Pipeline did not return a result for this member",
+                "lastProcessedAt": datetime.utcnow().isoformat(),
+            }}
+        )
+        failed += 1
 
     db.batches.update_one(
         {"id": req.batchId},

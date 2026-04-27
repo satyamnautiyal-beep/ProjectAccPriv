@@ -702,11 +702,16 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
             else:
                 # No hard blocks; evidence determines final status
                 if evidence_check.get("evidence_complete") is True:
-                    root_status_recommended = "Ready"
+                    root_status_recommended = "Enrolled (SEP)"
                 else:
                     root_status_recommended = "In Review"
 
-        
+        # ---- Final status: promote "Ready" to "Enrolled" for clean OEP path
+        # root_status_recommended is "Ready" only for OEP members with no hard blocks and no SEP.
+        if root_status_recommended == "Ready" and not sep_confirmed:
+            root_status_recommended = "Enrolled"
+
+        # ---- Send email if SEP evidence is missing
         if evidence_check and evidence_check.get("email_triggered"):
             email = draft_email(
                 template="sep_missing_documents",
@@ -784,8 +789,10 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
             "sep_confidence": sep_conf_marker,
             "evidence_status": evidence_status,
             "last_evidence_check_at": last_evidence_check_at,
-            # received_at should ideally be set at ingestion time, but you can default:
             "received_at": full_record.get("received_at") or _utc_now_z(),
+            # Enrollment path — always set so UI can filter/display
+            "enrollment_path": "SEP" if is_sep_confirmed else "OEP",
+            "is_within_oep": classification.get("is_within_oep"),
         }
 
         agent_analysis = {
@@ -798,8 +805,10 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
             "final_explain": {
                 "final_root_status": root_status_recommended,
                 "logic": (
-                    "If hard blockers exist -> In Review. "
-                    "Else if SEP confirmed -> Evidence complete => Ready; missing => In Review + email_triggered."
+                    "OEP clean path (no SEP, no hard blocks) => Enrolled. "
+                    "SEP confirmed + evidence complete => Enrolled (SEP). "
+                    "SEP confirmed + evidence missing => In Review + email triggered. "
+                    "Hard blocks (validation issues / blocking status) => In Review."
                 )
             }
         }

@@ -1,15 +1,19 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from datetime import datetime
+from typing import List
 from db.mongo_connection import get_database
 from server.business_logic import validate_member_record
 from server.ai.agent import orchestrate_enrollment
+from server.routers.files import get_statuses
+from server.ai.chat_agent import stream_chat_response
 
 router = APIRouter(prefix="/api")
 
 
 @router.get("/members")
 def get_members():
-    """Returns all members stored in MongoDB."""
     db = get_database()
     if db is not None:
         return list(db.members.find({}, {"_id": 0}))
@@ -18,11 +22,7 @@ def get_members():
 
 @router.post("/parse-members")
 def parse_members():
-    """
-    Runs Business Validation on newly ingested members.
-    Root status is updated.
-    Snapshot status is NOT overwritten.
-    """
+    """Runs business validation on all Pending Business Validation members."""
     db = get_database()
     if db is None:
         return {"error": "Database not available"}
@@ -43,7 +43,6 @@ def parse_members():
             "lastValidatedAt": datetime.utcnow().isoformat(),
         }
 
-        # OPTIONAL but recommended: write validation metadata into snapshot
         if latest_update:
             update_doc[f"history.{latest_update}.business_validation"] = {
                 "validated_at": datetime.utcnow().isoformat(),
@@ -66,10 +65,7 @@ def parse_members():
 
 @router.get("/agent/process/{subscriber_id}")
 def process_member_agent(subscriber_id: str):
-    """
-    Triggers AI Refinery pipeline for a single member.
-    Intended only for Ready / In Batch members.
-    """
+    """Triggers AI Refinery pipeline for a single member (Ready or In Batch)."""
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -84,15 +80,14 @@ def process_member_agent(subscriber_id: str):
             detail=f"Member not eligible for agent processing (status={member.get('status')})",
         )
 
-    # Run agentic pipeline
     result = orchestrate_enrollment(member)
-
     root_status = result.get("root_status_recommended", "In Review")
 
     db.members.update_one(
         {"subscriber_id": subscriber_id},
         {"$set": {
             "agent_analysis": result.get("agent_analysis", result),
+            "markers": result.get("markers", {}),
             "status": root_status,
             "lastProcessedAt": datetime.utcnow().isoformat(),
         }}
@@ -103,3 +98,79 @@ def process_member_agent(subscriber_id: str):
         "root_status_recommended": root_status,
         "agent_analysis": result.get("agent_analysis", result),
     }
+
+
+def summarize_system_status():
+    db = get_database()
+    member_counts = {}
+    batch_count = 0
+    batches = []
+
+    if db is not None:
+        for m_doc in db.members.find({}, {"_id": 0, "status": 1}):
+            status = m_doc.get("status", "Unknown")
+            member_counts[status] = member_counts.get(status, 0) + 1
+
+        batches = list(db.batches.find({}, {"_id": 0}))
+        batch_count = len(batches)
+
+    file_counts = {}
+    try:
+        statuses = get_statuses()
+        for status_record in statuses.values():
+            status_name = status_record.get("status", "Unknown")
+            file_counts[status_name] = file_counts.get(status_name, 0) + 1
+    except Exception:
+        file_counts = {}
+
+    return {
+        "memberCounts": member_counts,
+        "batchCount": batch_count,
+        "fileCounts": file_counts,
+        "batches": batches,
+    }
+
+
+# -----------------------------------
+# LLM CHAT ENDPOINT
+# -----------------------------------
+
+class ChatMessage(BaseModel):
+    role: str
+    text: str
+
+
+class LLMChatRequest(BaseModel):
+    message: str
+    history: List[ChatMessage] = []
+
+
+@router.post("/assistant/chat/llm")
+async def assistant_chat_llm(req: LLMChatRequest):
+    """LLM-powered assistant with full conversation history and tool calling."""
+    summary = summarize_system_status()
+    member_counts = summary.get("memberCounts", {})
+    file_counts = summary.get("fileCounts", {})
+    batches = summary.get("batches", [])
+
+    system_context = (
+        f"Ready: {member_counts.get('Ready', 0)}, "
+        f"Pending Validation: {member_counts.get('Pending Business Validation', 0)}, "
+        f"Awaiting Clarification: {member_counts.get('Awaiting Clarification', 0)}, "
+        f"In Batch: {member_counts.get('In Batch', 0)}, "
+        f"Enrolled: {member_counts.get('Enrolled', 0)}, "
+        f"Enrolled (SEP): {member_counts.get('Enrolled (SEP)', 0)}, "
+        f"In Review: {member_counts.get('In Review', 0)}, "
+        f"Processing Failed: {member_counts.get('Processing Failed', 0)}, "
+        f"Files with Issues: {file_counts.get('Structure Error', 0) + file_counts.get('Parsing Failed', 0)}, "
+        f"Active Batches: {len(batches)}"
+    )
+
+    full_history = [msg.dict() for msg in req.history]
+    full_history.append({"role": "user", "text": req.message})
+
+    async def event_stream():
+        async for chunk in stream_chat_response(full_history, system_context):
+            yield chunk
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

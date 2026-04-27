@@ -10,10 +10,6 @@ from server.edi_validator import check_edi_structure
 
 router = APIRouter(prefix="/api")
 
-def generate_random_name():
-    # Note: random removed to simplify, using static for now or could re-import
-    return "New Batch"
-
 def get_todays_dir():
     # from datetime import datetime was used, so we use datetime.now()
     today_str = datetime.now().strftime("%Y-%m-%d")

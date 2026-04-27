@@ -1,43 +1,38 @@
 from fastapi import APIRouter
-import os
-import datetime
-from server.database import DATA_DIR
+from server.routers.members import get_members, summarize_system_status
+from server.routers.clarifications import read_clarifications
 
 router = APIRouter(prefix="/api")
 
+
 @router.get("/metrics")
 def get_metrics():
-    from server.routers.files import get_statuses
-    statuses = get_statuses()
-    filesToday = len(statuses)
+    summary = summarize_system_status()
+    mc = summary.get("memberCounts", {})
 
-    from server.routers.members import get_members
-    from server.routers.clarifications import read_clarifications
     members = get_members()
     clarifications = read_clarifications()
 
-    membersIdentified = len(members)
-    readyCount = sum(1 for m in members if m.get("status") == "Ready")
-    triageCount = sum(1 for m in members if m.get("status") == "Awaiting Clarification")
-    pendingCount = sum(1 for m in members if m.get("status") in ["Pending Business Validation", "Under Review", "Pending"])
-    blockedCount = sum(1 for m in members if m.get("status") == "Cannot Process")
-    awaitingClarification = sum(1 for c in clarifications if c.get("status") != "Resolved")
-
     return {
         "kpis": {
-            "filesToday": filesToday,
-            "membersIdentified": membersIdentified,
-            "readyCount": readyCount,
-            "pendingCount": pendingCount + triageCount,
-            "blockedCount": blockedCount,
-            "awaitingClarification": awaitingClarification,
-            "inProgressBatches": 0,
-            "completedBatches": 0
+            "filesToday": len(summary.get("fileCounts", {})),
+            "membersIdentified": len(members),
+            "readyCount": mc.get("Ready", 0),
+            "pendingCount": mc.get("Pending Business Validation", 0) + mc.get("Awaiting Clarification", 0),
+            "enrolledCount": mc.get("Enrolled", 0) + mc.get("Enrolled (SEP)", 0),
+            "inReviewCount": mc.get("In Review", 0),
+            "processingFailedCount": mc.get("Processing Failed", 0),
+            "blockedCount": mc.get("Cannot Process", 0),
+            "awaitingClarification": sum(1 for c in clarifications if c.get("status") != "Resolved"),
+            "inProgressBatches": sum(1 for b in summary.get("batches", []) if b.get("status") == "Awaiting Approval"),
+            "completedBatches": sum(1 for b in summary.get("batches", []) if b.get("status") == "Completed"),
         },
         "pieData": [
-            {"name": "Ready", "value": readyCount, "color": "#22c55e"},
-            {"name": "Pending", "value": pendingCount, "color": "#3b82f6"},
-            {"name": "Awaiting Clarification", "value": triageCount, "color": "#f59e0b"},
-            {"name": "Blocked", "value": blockedCount, "color": "#ef4444"}
+            {"name": "Enrolled (OEP)", "value": mc.get("Enrolled", 0), "color": "#22c55e"},
+            {"name": "Enrolled (SEP)", "value": mc.get("Enrolled (SEP)", 0), "color": "#16a34a"},
+            {"name": "In Review", "value": mc.get("In Review", 0), "color": "#3b82f6"},
+            {"name": "Pending", "value": mc.get("Pending Business Validation", 0), "color": "#6366f1"},
+            {"name": "Awaiting Clarification", "value": mc.get("Awaiting Clarification", 0), "color": "#f59e0b"},
+            {"name": "Processing Failed", "value": mc.get("Processing Failed", 0), "color": "#ef4444"},
         ]
     }

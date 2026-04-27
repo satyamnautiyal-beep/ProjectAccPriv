@@ -1,0 +1,35 @@
+{
+  "subscriber_id": "EMPSEP0001",
+  "history": {
+    "2026-03-01": {
+      "_is_sub": true,
+      "member_info": {
+        "subscriber_indicator": "Y",
+        "relationship_code": "18",
+        "subscriber_id": "EMPSEP0001",
+        "first_name": "Rohit",
+        "last_name": "Mehra",
+        "ssn": "910000111",
+        "dob": "1989-05-14",
+        "gender": "M",
+        "address_line_1": "15 OLD LAYOUT",
+        "city": "Pune",
+        "state": "MH",
+        "zip": "411001",
+        "employer_name": "ABC CORPORATION",
+        "employer_id": "123456789",
+        "insurer_name": "ABC HEALTH INSURANCE",
+        "insurer_id": "987654321"
+      },
+      "coverages": [
+        { "coverage_type": "030", "plan_code": "HLT", "coverage_start_date": "2026-04-01" }
+      ],
+      "dependents": [],
+      "subscriber_id": "EMPSEP0001",
+      "status": "Validated"
+    }
+  },
+  "latest_update": "2026-03-01",
+  "status": "Ready",
+  "validation_issues": []
+}

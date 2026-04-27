@@ -1,0 +1,35 @@
+{
+  "subscriber_id": "EMPSEPLOS0001",
+  "history": {
+    "2026-02-10": {
+      "_is_sub": true,
+      "member_info": {
+        "subscriber_indicator": "Y",
+        "relationship_code": "18",
+        "subscriber_id": "EMPSEPLOS0001",
+        "first_name": "Amit",
+        "last_name": "Kapoor",
+        "ssn": "910000666",
+        "dob": "1987-03-08",
+        "gender": "M",
+        "address_line_1": "14 LAKE VIEW",
+        "city": "Jaipur",
+        "state": "RJ",
+        "zip": "302001"
+      },
+      "coverages": [
+        {
+          "coverage_type": "030",
+          "plan_code": "HLT",
+          "coverage_start_date": "2026-02-01"
+        }
+      ],
+      "dependents": [],
+      "subscriber_id": "EMPSEPLOS0001",
+      "status": "Validated"
+    }
+  },
+  "latest_update": "2026-02-10",
+  "status": "Ready",
+  "validation_issues": []
+}

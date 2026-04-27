@@ -9,17 +9,18 @@ env/
 *.sqlite3
 
 # --- Data & Workdirs ---
-# Exclude all generated or ingested data
 data/
 parsed_data/
-# Keep directory structures but not content if needed
-!data/.gitkeep
 
-# --- Synthetic Data ---
-# Exclude unzipped synthetic folders/files
-test_data/
-# Ensure zip samples ARE tracked
-!test_data/zips/*
+# --- Synthetic / Test Data ---
+# Ignore all test_data subfolders except demo
+test_data/*
+!test_data/demo/
+test_data/demo/*
+!test_data/demo/**
+
+# --- AI Refinery session tokens ---
+.air/
 
 # --- Frontend & React ---
 node_modules/
