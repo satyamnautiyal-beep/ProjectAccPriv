@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 from air import AsyncAIRefinery
 
-from email_agent import draft_email, send_email
+try:
+    from .email_agent import draft_email, send_email
+except ImportError:
+    from email_agent import draft_email, send_email
 
 
 def orchestrate_enrollment(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -286,7 +289,7 @@ def _decision_view(record: Dict[str, Any]) -> Dict[str, Any]:
 # -----------------------------------
 # MONGO PERSIST (optional)
 # -----------------------------------
-def mongo_update(subscriber_id: str, root_status: str, agent_analysis: Dict[str, Any]) -> None:
+def mongo_update(subscriber_id: str, root_status: str, agent_analysis: Dict[str, Any], markers: Optional[Dict[str, Any]] = None) -> None:
     if not MONGO_URI:
         return
     from pymongo import MongoClient
@@ -294,7 +297,7 @@ def mongo_update(subscriber_id: str, root_status: str, agent_analysis: Dict[str,
     col = client[MONGO_DB][MONGO_COLLECTION]
     col.update_one(
         {"subscriber_id": subscriber_id},
-        {"$set": {"status": root_status, "agent_analysis": agent_analysis}},
+        {"$set": {"status": root_status, "agent_analysis": agent_analysis, "markers": markers or {}, "updated_at": _utc_now_z()}},
         upsert=False,
     )
 
@@ -748,6 +751,42 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
                 "diff": raw_diffs,
                 "semantic_flags": flags
             }
+        
+        # ---- 5.5) Compute SEP markers for frontend filtering (NEW)
+        is_sep_candidate = bool(classification.get("sep_candidate"))
+        is_sep_confirmed = bool(branch_analysis.get("sep_confirmed")) if is_sep_candidate else False
+
+        sep_type_marker = None
+        sep_conf_marker = None
+        if is_sep_confirmed:
+            causality = (branch_analysis.get("sep_causality") or {})
+            sep_type_marker = causality.get("sep_candidate")
+            sep_conf_marker = causality.get("confidence")
+
+        evidence_status = "not_applicable"
+        last_evidence_check_at = None
+
+        if is_sep_confirmed and requires_evidence:
+            last_evidence_check_at = _utc_now_z()
+            if not sep_type_marker:
+                evidence_status = "unmapped"
+            elif evidence_check and evidence_check.get("required_docs") == [] and evidence_check.get("missing_docs"):
+                evidence_status = "unmapped"
+            elif evidence_check and evidence_check.get("evidence_complete") is True:
+                evidence_status = "complete"
+            else:
+                    evidence_status = "missing"
+
+        markers = {
+            "is_sep_candidate": is_sep_candidate,
+            "is_sep_confirmed": is_sep_confirmed,
+            "sep_type": sep_type_marker,
+            "sep_confidence": sep_conf_marker,
+            "evidence_status": evidence_status,
+            "last_evidence_check_at": last_evidence_check_at,
+            # received_at should ideally be set at ingestion time, but you can default:
+            "received_at": full_record.get("received_at") or _utc_now_z(),
+        }
 
         agent_analysis = {
             "diff": diff,
@@ -765,9 +804,11 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
             }
         }
 
+
         return json.dumps({
             "subscriber_id": subscriber_id,
             "root_status_recommended": root_status_recommended,
+            "markers": markers,                      # ✅ NEW
             "agent_analysis": agent_analysis
         })
 
@@ -863,6 +904,7 @@ async def process_record(record: Dict[str, Any], persist: bool = False) -> Dict[
             subscriber_id=result["subscriber_id"],
             root_status=result.get("root_status_recommended", "In Review"),
             agent_analysis=result.get("agent_analysis", {}),
+            markers=result.get("markers", {}),
         )
 
     return result
@@ -915,6 +957,7 @@ async def process_records_batch(
                         subscriber_id=parsed["subscriber_id"],
                         root_status=parsed.get("root_status_recommended", "In Review"),
                         agent_analysis=parsed.get("agent_analysis", {}),
+                        markers=parsed.get("markers", {}),
                     )
 
                 results.append(parsed)
