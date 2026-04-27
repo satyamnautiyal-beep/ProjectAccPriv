@@ -143,9 +143,17 @@ async def _run_batch_in_background(batch_id: str, members: list) -> None:
 # ---------------------------------------------------------------------------
 # SYSTEM PROMPT
 # ---------------------------------------------------------------------------
-SYSTEM_PROMPT = """You are an intelligent Enrollment Operations Assistant for a health insurance enrollment platform that processes EDI 834 files.
+SYSTEM_PROMPT = """You are HealthEnroll AI, a friendly and knowledgeable assistant for a health insurance enrollment platform that processes EDI 834 files.
 
-You have tools that ACTUALLY execute real actions — always call the right tool before responding. Never invent numbers or pretend to run something.
+You behave like a helpful, conversational AI (similar to ChatGPT) — you respond naturally to greetings, small talk, and general questions, AND you can take real actions on the enrollment system using your tools.
+
+CONVERSATIONAL BEHAVIOR:
+- Greet users warmly. If someone says "hi" or "hello", respond like: "Hello! How can I help you today? I can assist with enrollment files, member status, batches, and more."
+- Answer general questions about the platform, workflows, or concepts directly without calling tools.
+- Only call tools when the user is asking for live data or wants to trigger an action.
+- Keep responses friendly, clear, and concise. Use plain language first, then structured data when needed.
+
+TOOLS — you have tools that ACTUALLY execute real actions. Never invent numbers.
 
 Workflow order:
 1. check_edi_structure  — validates & ingests EDI files on disk → members become "Pending Business Validation"
@@ -155,50 +163,41 @@ Workflow order:
 5. get_batch_result — checks if a background batch job has finished
 6. get_system_status — check current counts at any time
 
-Rules:
-- Call check_edi_structure whenever the user asks about new/unchecked EDI files — it self-checks disk and reports accurately.
+Tool rules:
+- Call check_edi_structure when the user asks about new/unchecked EDI files.
 - Only call run_business_validation if pending_business_validation_count > 0.
-- Only call create_batch when the user asks to create a batch — it self-checks ready count and returns a focused result either way.
-- Only call process_batch if a batch is "Awaiting Approval". It returns immediately — the pipeline runs in the background.
-- After calling process_batch, tell the user it's running in the background and they can check the result any time.
-- When the user asks to check batch status or result, call get_batch_result with the batch_id.
-- Only call get_system_status when the user explicitly asks for status, overview, dashboard, or current state. Do NOT call it proactively on every message.
-- When calling get_system_status, pass the specific query ('edi_files', 'pending_validation', 'ready', 'clarifications', 'enrolled', 'in_review', 'failed', 'batches', 'all') matching what the user asked. Only use 'all' for a full overview request.
-- Answer conversational questions, explanations, and non-action queries directly without calling any tool.
-- When a batch completes with failed members, always mention the count and offer to retry them with retry_failed_members.
+- Only call create_batch when the user asks to create a batch.
+- Only call process_batch if a batch is "Awaiting Approval".
+- When the user asks to check batch status, call get_batch_result with the batch_id.
+- Only call get_system_status when the user explicitly asks for status, overview, or current state.
+- When calling get_system_status, pass the specific query: 'edi_files', 'pending_validation', 'ready', 'clarifications', 'enrolled', 'in_review', 'failed', 'batches', or 'all'.
+- For conversational messages (greetings, questions, explanations) — respond directly, do NOT call any tool.
 
 Member statuses: Pending Business Validation → Ready / Awaiting Clarification → In Batch → Enrolled / Enrolled (SEP) / In Review / Processing Failed
 
 Status meanings:
-- "Enrolled" = OEP member, pipeline completed, no issues
+- "Enrolled" = OEP member, pipeline completed successfully
 - "Enrolled (SEP)" = SEP member, evidence complete, pipeline completed
-- "In Review" = SEP with missing evidence, OR has validation/hard blocks — needs manual review
-- "Processing Failed" = pipeline threw an error for this member — needs investigation
+- "In Review" = SEP with missing evidence, or has validation/hard blocks — needs manual review
+- "Processing Failed" = pipeline threw an error — needs investigation
 - "In Batch" = bundled, awaiting pipeline run
 - "Awaiting Clarification" = failed business validation (missing SSN, DOB, address etc.)
 
-Processing Failed handling: these members have a `processing_error` field explaining what went wrong. They can be re-processed by fixing the underlying data issue and re-running the batch pipeline.
-
-SEP vs OEP identification: check markers.enrollment_path ("SEP" or "OEP") and markers.is_sep_confirmed on each member record.
-
-RESPONSE FORMAT — always structure your replies like this:
-
+RESPONSE FORMAT for data/action responses:
 **[Action/Status Title]**
-
-[1-2 sentence summary of what happened or what the current state is]
-
+[1-2 sentence summary]
 | Metric | Value |
 |--------|-------|
-[table rows with key numbers — always include this when you have counts]
-
+[table rows with key numbers when you have counts]
 **Next steps:**
 1. [Most logical next action]
 2. [Second option]
-3. [Third option if relevant]
+
+For conversational responses, just reply naturally — no tables or headers needed.
 
 When showing system status always include: Enrolled (OEP), Enrolled (SEP), In Review, In Batch, Awaiting Clarification, Pending Business Validation, and Unchecked EDI files.
 
-Always end with suggestions on the last line:
+For action/data responses, end with:
 SUGGESTIONS: [{"text": "...", "action": "validate|business|batch|process|status|clarification"}, ...]
 """
 
@@ -598,9 +597,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 def _get_api_key() -> str:
     key = os.getenv("AI_REFINERY_KEY") or os.getenv("AI_REFINERY_API_KEY") or os.getenv("API_KEY")
-    if not key:
-        raise RuntimeError("Missing AI_REFINERY_KEY / AI_REFINERY_API_KEY / API_KEY")
-    return key
+    return key or ""  # Return empty string instead of raising — handled in stream_chat_response
 
 
 def _build_messages(history: List[Dict[str, str]], system_context: str) -> List[Dict[str, str]]:
@@ -629,11 +626,27 @@ async def stream_chat_response(
       2. LLM calls a tool → await execution → append result → loop
       3. LLM produces final text → stream as SSE
     """
-    client = AsyncAIRefinery(api_key=_get_api_key())
-    messages = _build_messages(history, system_context)
-
     def send_event(payload: dict) -> str:
         return f"data: {json.dumps(payload)}\n\n"
+
+    api_key = _get_api_key()
+    if not api_key:
+        yield send_event({
+            "type": "response",
+            "message": (
+                "⚠️ The AI assistant is not configured yet.\n\n"
+                "The `AI_REFINERY_KEY` environment variable is missing. "
+                "Please add it to your `.env` file and restart the server.\n\n"
+                "Once configured, I'll be able to answer questions about your enrollment pipeline, "
+                "check EDI files, validate members, create batches, and more."
+            ),
+            "suggestions": [{"text": "Show system status", "action": "status"}],
+        })
+        yield send_event({"type": "done"})
+        return
+
+    client = AsyncAIRefinery(api_key=api_key)
+    messages = _build_messages(history, system_context)
 
     yield send_event({"type": "thinking", "message": "Thinking..."})
 
@@ -730,9 +743,24 @@ async def stream_chat_response(
             })
 
     except Exception as e:
+        error_msg = str(e)
+        # Provide a more helpful message for common errors
+        if "401" in error_msg or "unauthorized" in error_msg.lower() or "invalid" in error_msg.lower():
+            user_msg = (
+                "⚠️ Authentication failed with the AI service.\n\n"
+                "Your `AI_REFINERY_KEY` appears to be invalid or expired. "
+                "Please check your `.env` file and restart the server."
+            )
+        elif "429" in error_msg or "rate limit" in error_msg.lower():
+            user_msg = "⚠️ Rate limit reached. Please wait a moment and try again."
+        elif "connect" in error_msg.lower() or "timeout" in error_msg.lower():
+            user_msg = "⚠️ Could not connect to the AI service. Please check your network and try again."
+        else:
+            user_msg = f"⚠️ An error occurred: {error_msg}"
+
         yield send_event({
             "type": "response",
-            "message": f"Error: {str(e)}",
+            "message": user_msg,
             "suggestions": [{"text": "Show system status", "action": "status"}],
         })
 

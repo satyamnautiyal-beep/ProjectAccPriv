@@ -1,13 +1,29 @@
 'use client';
 
 import React, { useRef, useEffect } from 'react';
-import { Bot, Send, Sparkles, Loader2, CheckCircle2, Circle } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import {
+  Bot,
+  Send,
+  Sparkles,
+  Loader2,
+  CheckCircle2,
+  Circle,
+  Plus,
+  ArrowLeft,
+  MessageSquare,
+} from 'lucide-react';
 import styles from './ai-assistant.module.css';
-import Annotation from '@/components/Annotation';
-import RemoveBottomPadding from '@/components/RemoveBottomPadding';
 import useUIStore from '@/store/uiStore';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
+
+const PROMPT_SUGGESTIONS = [
+  { text: 'How many files did we receive today?' },
+  { text: 'What is the current member status?' },
+  { text: 'How many clarifications are pending?' },
+  { text: 'What is the status of active batches?' },
+];
 
 const ACTION_TEXT = {
   validate: 'Check and validate all EDI files for structure',
@@ -19,22 +35,44 @@ const ACTION_TEXT = {
   help: 'Help',
 };
 
+function formatTime(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
 export default function AIAssistantPage() {
+  const router = useRouter();
   const {
-    chatMessages,
+    chatHistory,
+    activeConversationId,
+    getChatMessages,
     chatInput,
     chatIsProcessing,
     chatProcessSteps,
-    setChatMessages,
     setChatInput,
     setChatIsProcessing,
+    setChatMessages,
+    addMessage,
     updateChatStep,
     resetChatSteps,
-    clearChat,
+    startNewConversation,
+    switchConversation,
   } = useUIStore();
 
   const messagesEndRef = useRef(null);
   const abortControllerRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const chatMessages = getChatMessages();
+  const hasMessages = chatMessages.length > 0;
+
+  // On first mount, start a conversation if none is active
+  useEffect(() => {
+    if (!activeConversationId) {
+      startNewConversation();
+    }
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -52,14 +90,14 @@ export default function AIAssistantPage() {
     resetChatSteps();
     setChatIsProcessing(true);
 
-    updateChatStep('1', 'completed', 'Got it!');
-    updateChatStep('2', 'active', 'Thinking...');
+    updateChatStep('1', 'active', 'Analyzing your message...');
 
-    // Build history from current messages (exclude the new user message — it's sent separately)
     const history = chatMessages.map((m) => ({ role: m.role, text: m.text }));
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+
+    let thinkingCount = 0;
 
     try {
       const res = await fetch('/api/assistant/chat/llm', {
@@ -69,7 +107,11 @@ export default function AIAssistantPage() {
         signal: controller.signal,
       });
 
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      if (!res.ok) {
+        let errText = `Server error ${res.status}`;
+        try { errText = await res.text(); } catch {}
+        throw new Error(errText);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -81,7 +123,7 @@ export default function AIAssistantPage() {
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop(); // keep incomplete line
+        buffer = lines.pop();
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
@@ -93,12 +135,20 @@ export default function AIAssistantPage() {
 
           switch (payload.type) {
             case 'thinking':
-              updateChatStep('2', 'active', payload.message);
-              updateChatStep('3', 'pending', 'Running workflows...');
+              thinkingCount++;
+              if (thinkingCount === 1) {
+                // First thinking = LLM received the message
+                updateChatStep('1', 'completed', 'Intent detected');
+                updateChatStep('2', 'active', payload.message || 'Fetching data...');
+              } else {
+                // Subsequent thinking = tool calls running
+                updateChatStep('2', 'active', payload.message || 'Fetching data...');
+              }
               break;
 
             case 'status_update':
-              updateChatStep('3', 'active', payload.message);
+              updateChatStep('2', 'completed', 'Data retrieved');
+              updateChatStep('3', 'active', 'Analyzing results...');
               setChatMessages((prev) => [
                 ...prev,
                 {
@@ -107,13 +157,16 @@ export default function AIAssistantPage() {
                   text: payload.message,
                   isStatusUpdate: true,
                   details: payload.details,
+                  timestamp: new Date().toISOString(),
                 },
               ]);
               break;
 
             case 'response':
-              updateChatStep('3', 'completed', 'Done!');
-              updateChatStep('4', 'active', 'Preparing response...');
+              updateChatStep('1', 'completed', 'Intent detected');
+              updateChatStep('2', 'completed', 'Data retrieved');
+              updateChatStep('3', 'completed', 'Analysis complete');
+              updateChatStep('4', 'active', 'Generating response...');
               setChatMessages((prev) => [
                 ...prev,
                 {
@@ -121,12 +174,13 @@ export default function AIAssistantPage() {
                   role: 'ai',
                   text: payload.message,
                   suggestions: payload.suggestions,
+                  timestamp: new Date().toISOString(),
                 },
               ]);
               break;
 
             case 'done':
-              updateChatStep('4', 'completed', 'Response ready!');
+              updateChatStep('4', 'completed', 'Response ready');
               setChatIsProcessing(false);
               break;
 
@@ -142,8 +196,8 @@ export default function AIAssistantPage() {
           {
             id: generateId(),
             role: 'ai',
-            text: '❌ Something went wrong. Please try again.',
-            suggestions: [{ text: 'Show system status', action: 'status' }],
+            text: `❌ Could not reach the server. Please make sure the backend is running.\n\n${err.message}`,
+            timestamp: new Date().toISOString(),
           },
         ]);
       }
@@ -158,59 +212,99 @@ export default function AIAssistantPage() {
     const query = chatInput.trim();
     setChatInput('');
 
-    setChatMessages((prev) => [
-      ...prev,
-      { id: generateId(), role: 'user', text: query },
-    ]);
-
+    addMessage({ id: generateId(), role: 'user', text: query });
     streamLLMChat(query);
   };
 
-  const handleSuggestion = (action) => {
+  const handleSuggestionClick = (text) => {
+    if (chatIsProcessing) return;
+    addMessage({ id: generateId(), role: 'user', text });
+    streamLLMChat(text);
+  };
+
+  const handleActionSuggestion = (action) => {
     const message = ACTION_TEXT[action] || action;
-    setChatMessages((prev) => [
-      ...prev,
-      { id: generateId(), role: 'user', text: message },
-    ]);
+    addMessage({ id: generateId(), role: 'user', text: message });
     streamLLMChat(message);
   };
 
+  const handleNewChat = () => {
+    startNewConversation();
+    inputRef.current?.focus();
+  };
+
   return (
-    <div className={styles.container}>
-      <RemoveBottomPadding />
+    <div className={styles.pageWrapper}>
 
-      {/* LEFT COLUMN: CHAT INTERFACE */}
-      <div className={styles.chatColumn}>
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <div className={styles.chatHeader}>
-            <div className={styles.chatTitle}>
-              <Bot className="lucide-icon" size={20} color="var(--primary)" />
-              Conversational Enrollment Assistant
-            </div>
+      {/* LEFT SIDEBAR: History */}
+      <aside className={styles.sidebar}>
+        {/* Back to main */}
+        <button className={styles.backButton} onClick={() => router.push('/dashboard')}>
+          <ArrowLeft size={14} />
+          Back
+        </button>
+
+        {/* New Chat */}
+        <button className={styles.newChatButton} onClick={handleNewChat}>
+          <Plus size={16} />
+          New Chat
+        </button>
+
+        {/* Conversation list */}
+        <div className={styles.historyList}>
+          {chatHistory.map((conv) => (
             <button
-              onClick={clearChat}
-              disabled={chatIsProcessing}
-              style={{
-                background: 'none',
-                border: '1px solid var(--border)',
-                borderRadius: '6px',
-                padding: '4px 10px',
-                fontSize: '0.75rem',
-                cursor: 'pointer',
-                color: 'var(--muted)',
-              }}
+              key={conv.id}
+              className={`${styles.historyItem} ${
+                conv.id === activeConversationId ? styles.historyItemActive : ''
+              }`}
+              onClick={() => switchConversation(conv.id)}
             >
-              Clear chat
+              <MessageSquare size={13} className={styles.historyIcon} />
+              <div className={styles.historyItemContent}>
+                <span className={styles.historyTitle}>{conv.title}</span>
+                <span className={styles.historyTime}>
+                  {formatTime(conv.createdAt)}
+                </span>
+              </div>
             </button>
-          </div>
+          ))}
+        </div>
+      </aside>
 
-          <Annotation
-            title="Chat Interface"
-            what="Conversational UX"
-            why="Natural language interaction"
-            how="Chat with the LLM-powered agent. Context is preserved as you navigate between pages."
-          >
-            <div className={styles.chatWindow}>
+      {/* CENTER: Chat area */}
+      <main className={styles.chatColumn}>
+        {/* Header */}
+        <div className={styles.chatHeader}>
+          <div className={styles.chatTitle}>
+            <Bot size={18} color="var(--primary)" />
+            HealthEnroll AI
+          </div>
+        </div>
+
+        {/* Messages or Welcome screen */}
+        <div className={styles.chatWindow}>
+          {!hasMessages ? (
+            /* Welcome / empty state */
+            <div className={styles.welcomeScreen}>
+              <Sparkles size={40} color="var(--primary)" className={styles.welcomeIcon} />
+              <h2 className={styles.welcomeTitle}>How can I help you today?</h2>
+              <div className={styles.promptGrid}>
+                {PROMPT_SUGGESTIONS.map((s, i) => (
+                  <button
+                    key={i}
+                    className={styles.promptCard}
+                    onClick={() => handleSuggestionClick(s.text)}
+                    disabled={chatIsProcessing}
+                  >
+                    {s.text}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            /* Chat messages */
+            <>
               {chatMessages.map((msg) => (
                 <div
                   key={msg.id}
@@ -231,7 +325,7 @@ export default function AIAssistantPage() {
                           <button
                             key={idx}
                             className={styles.suggestionButton}
-                            onClick={() => handleSuggestion(suggestion.action)}
+                            onClick={() => handleActionSuggestion(suggestion.action)}
                             disabled={chatIsProcessing}
                           >
                             {suggestion.text}
@@ -251,6 +345,10 @@ export default function AIAssistantPage() {
                           ))}
                       </div>
                     )}
+
+                    {msg.timestamp && (
+                      <div className={styles.timestamp}>{formatTime(msg.timestamp)}</div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -266,96 +364,80 @@ export default function AIAssistantPage() {
                   </div>
                 </div>
               )}
-
-              <div ref={messagesEndRef} />
-            </div>
-          </Annotation>
-
-          <Annotation
-            title="Input Field"
-            what="Natural Language Prompt"
-            why="Conversational control"
-            how="Ask anything — the LLM understands context from your full conversation history."
-          >
-            <form className={styles.inputArea} onSubmit={handleSend}>
-              <input
-                type="text"
-                className={styles.input}
-                placeholder="Ask anything about your enrollment pipeline..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                disabled={chatIsProcessing}
-              />
-              <button
-                type="submit"
-                className={styles.sendButton}
-                disabled={!chatInput.trim() || chatIsProcessing}
-              >
-                <Send size={18} />
-              </button>
-            </form>
-          </Annotation>
+            </>
+          )}
+          <div ref={messagesEndRef} />
         </div>
-      </div>
 
-      {/* RIGHT COLUMN: PROCESSING INSIGHTS */}
-      <div className={styles.processingColumn}>
-        <Annotation
-          title="Assistant Reasoning"
-          what="Step-by-Step Transparency"
-          why="Builds confidence"
-          how="See exactly what the assistant is thinking and doing at each stage."
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <div className={styles.processingHeader}>
-              <div className={styles.processingTitle}>
-                <Sparkles className="lucide-icon" size={20} color="var(--primary)" />
-                AI Reasoning
-              </div>
-            </div>
+        {/* Input area */}
+        <form className={styles.inputArea} onSubmit={handleSend}>
+          <input
+            ref={inputRef}
+            type="text"
+            className={styles.input}
+            placeholder="Message your enrollment assistant..."
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            disabled={chatIsProcessing}
+          />
+          <button
+            type="submit"
+            className={styles.sendButton}
+            disabled={!chatInput.trim() || chatIsProcessing}
+            aria-label="Send message"
+          >
+            <Send size={16} />
+          </button>
+        </form>
+      </main>
 
-            <div className={styles.processingBody}>
-              {chatProcessSteps.map((step) => {
-                let StepIcon = Circle;
-                let iconClass = styles.stepIcon;
+      {/* RIGHT SIDEBAR: AI Processing */}
+      <aside className={styles.processingColumn}>
+        <div className={styles.processingHeader}>
+          <Sparkles size={16} color="var(--primary)" />
+          <span className={styles.processingTitle}>AI Processing</span>
+        </div>
 
-                if (step.status === 'active') {
-                  StepIcon = Loader2;
-                  iconClass = `${styles.stepIcon} ${styles.stepIconActive} animate-spin`;
-                } else if (step.status === 'completed') {
-                  StepIcon = CheckCircle2;
-                  iconClass = `${styles.stepIcon} ${styles.stepIconCompleted}`;
-                }
+        <div className={styles.processingBody}>
+          {chatProcessSteps.map((step) => {
+            let StepIcon = Circle;
+            let iconClass = styles.stepIcon;
 
-                return (
-                  <div key={step.id} className={styles.stepItem}>
-                    <div className={iconClass}>
-                      <StepIcon
-                        size={14}
-                        className={step.status === 'active' ? 'animate-spin' : ''}
-                      />
-                    </div>
-                    <div className={styles.stepContent}>
-                      <div
-                        className={`${styles.stepTitle} ${
-                          step.status === 'active'
-                            ? styles.stepTitleActive
-                            : step.status === 'pending'
-                            ? styles.stepTitlePending
-                            : ''
-                        }`}
-                      >
-                        {step.title}
-                      </div>
-                      <div className={styles.stepDetail}>{step.detail}</div>
-                    </div>
+            if (step.status === 'active') {
+              StepIcon = Loader2;
+              iconClass = `${styles.stepIcon} ${styles.stepIconActive}`;
+            } else if (step.status === 'completed') {
+              StepIcon = CheckCircle2;
+              iconClass = `${styles.stepIcon} ${styles.stepIconCompleted}`;
+            }
+
+            return (
+              <div key={step.id} className={styles.stepItem}>
+                <div className={iconClass}>
+                  <StepIcon
+                    size={14}
+                    className={step.status === 'active' ? styles.spinIcon : ''}
+                  />
+                </div>
+                <div className={styles.stepContent}>
+                  <div
+                    className={`${styles.stepTitle} ${
+                      step.status === 'active'
+                        ? styles.stepTitleActive
+                        : step.status === 'pending'
+                        ? styles.stepTitlePending
+                        : ''
+                    }`}
+                  >
+                    {step.title}
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        </Annotation>
-      </div>
+                  <div className={styles.stepDetail}>{step.detail}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </aside>
     </div>
   );
 }

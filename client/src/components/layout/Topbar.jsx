@@ -12,7 +12,7 @@ export default function Topbar() {
   const router = useRouter();
   const { sidebarOpen, toggleSidebar, showAnnotations, toggleAnnotations } = useUIStore();
 
-  if (pathname === '/login') return null;
+  if (pathname === '/login' || pathname === '/ai-assistant') return null;
 
   return (
     <header className={styles.topbar}>

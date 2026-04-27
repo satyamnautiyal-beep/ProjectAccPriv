@@ -1,0 +1,452 @@
+/* ============================================================
+   Subscriber Onboard — File Intake Enhanced Styles
+   ============================================================ */
+
+/* ---- File table row states ---- */
+.fileRowCorrupt {
+  background-color: rgba(239, 68, 68, 0.04) !important;
+  border-left: 3px solid var(--danger) !important;
+}
+
+.fileRowCorrupt td {
+  background-color: transparent !important;
+}
+
+.fileRowNew {
+  background-color: rgba(59, 130, 246, 0.04) !important;
+  border-left: 3px solid var(--primary) !important;
+}
+
+.fileRowNew td {
+  background-color: transparent !important;
+}
+
+.fileRowClickable {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.fileRowClickable:hover td {
+  background-color: var(--bg-surface-hover, rgba(0,0,0,0.03)) !important;
+}
+
+.fileRowSelected td {
+  background-color: var(--primary-light, rgba(59,130,246,0.08)) !important;
+}
+
+/* ---- Priority badge ---- */
+.priorityBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.priorityBadgeCorrupt {
+  background-color: var(--danger-light, #fee2e2);
+  color: var(--danger, #dc2626);
+  border: 1px solid rgba(220, 38, 38, 0.2);
+}
+
+.priorityBadgeNew {
+  background-color: var(--primary-light, rgba(59,130,246,0.12));
+  color: var(--primary, #3b82f6);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+/* ---- Status badges ---- */
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.statusCorrupt {
+  background-color: var(--danger-light, #fee2e2);
+  color: var(--danger, #dc2626);
+}
+
+.statusAttention {
+  background-color: var(--warning-light, #fef3c7);
+  color: var(--warning, #d97706);
+}
+
+.statusReview {
+  background-color: var(--primary-light, rgba(59,130,246,0.12));
+  color: var(--primary, #3b82f6);
+}
+
+.statusReady {
+  background-color: var(--success-light, #dcfce7);
+  color: var(--success, #16a34a);
+}
+
+.statusDefault {
+  background-color: var(--bg-root, #f9fafb);
+  color: var(--text-muted, #6b7280);
+  border: 1px solid var(--border);
+}
+
+/* ---- Action needed cell ---- */
+.actionNeeded {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.actionNeededUrgent {
+  color: var(--danger, #dc2626);
+  font-weight: 600;
+}
+
+.actionNeededWarning {
+  color: var(--warning, #d97706);
+  font-weight: 500;
+}
+
+/* ---- Click hint ---- */
+.clickHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--primary);
+  opacity: 0;
+  transition: opacity 0.15s;
+  margin-left: 6px;
+}
+
+.fileRowClickable:hover .clickHint {
+  opacity: 1;
+}
+
+/* ---- Section divider ---- */
+.sectionDivider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  background: var(--bg-root);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.sectionDividerCorrupt {
+  color: var(--danger, #dc2626);
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.sectionDividerDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   DEPENDENTS PANEL (right slide-in)
+   ============================================================ */
+
+.panelOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 100;
+  animation: overlayIn 0.2s ease;
+}
+
+@keyframes overlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 480px;
+  max-width: 95vw;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  z-index: 101;
+  animation: panelSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes panelSlideIn {
+  from { transform: translateX(100%); opacity: 0.6; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.panelHeader {
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+.panelHeaderLeft {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.panelTitle {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.panelSubtitle {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+.panelCloseBtn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.panelCloseBtn:hover {
+  background: var(--bg-root);
+  color: var(--text-main);
+}
+
+/* Subscriber info strip */
+.subscriberStrip {
+  padding: var(--space-4) var(--space-6);
+  background: var(--bg-root);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  flex-shrink: 0;
+}
+
+.subscriberField {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 100px;
+}
+
+.subscriberFieldLabel {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.subscriberFieldValue {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-main);
+}
+
+/* Panel body */
+.panelBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* Dependents section */
+.dependentsSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dependentsSectionTitle {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dependentsCount {
+  background: var(--primary-light, rgba(59,130,246,0.12));
+  color: var(--primary);
+  border-radius: var(--radius-full);
+  padding: 1px 7px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.dependentsTable {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  font-size: 0.875rem;
+}
+
+.dependentsTable th {
+  text-align: left;
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--bg-root);
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+}
+
+.dependentsTable td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-main);
+  vertical-align: middle;
+}
+
+.dependentsTable tr:last-child td {
+  border-bottom: none;
+}
+
+.dependentsTable tr:hover td {
+  background: var(--bg-root);
+}
+
+.noDependents {
+  text-align: center;
+  padding: var(--space-6);
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  background: var(--bg-root);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* Gender pill */
+.genderPill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.genderM {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+}
+
+.genderF {
+  background: rgba(236, 72, 153, 0.1);
+  color: #db2777;
+}
+
+.genderOther {
+  background: var(--bg-root);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+/* Coverage chips */
+.coverageChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--success-light, #dcfce7);
+  color: var(--success, #16a34a);
+  border: 1px solid rgba(22, 163, 74, 0.15);
+}
+
+/* Panel loader */
+.panelLoader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-10);
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+/* Empty state */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-10);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+/* Spin animation */
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Table column widths */
+.colIdentifier { width: 140px; }
+.colName       { min-width: 160px; }
+.colPayer      { min-width: 140px; }
+.colCoverage   { width: 150px; }
+.colAction     { width: 160px; }
+.colStatus     { width: 160px; }

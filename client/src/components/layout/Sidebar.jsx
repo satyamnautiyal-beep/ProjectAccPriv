@@ -33,7 +33,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const sidebarOpen = useUIStore((state) => state.sidebarOpen);
 
-  if (pathname === '/login') return null; // hide on login
+  if (pathname === '/login' || pathname === '/ai-assistant') return null;
 
   return (
     <aside className={`${styles.sidebar} ${sidebarOpen ? styles.open : styles.collapsed}`}>
