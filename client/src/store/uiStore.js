@@ -1,71 +1,145 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-const INITIAL_MESSAGE = {
-  id: generateId(),
-  role: 'ai',
-  text: "Hey! 👋 I'm your AI Enrollment Assistant. I can help you validate EDI files, run business checks, create batches, and process enrollments — all through conversation. What would you like to do?",
-  suggestions: [
-    { text: 'Check EDI files', action: 'validate' },
-    { text: 'Run business checks', action: 'business' },
-    { text: 'Create & process batch', action: 'batch' },
-    { text: 'Show me status', action: 'status' },
-  ],
-};
-
 const INITIAL_STEPS = [
-  { id: '1', title: 'Understanding', detail: 'Listening...', status: 'pending' },
-  { id: '2', title: 'Thinking', detail: 'Processing your request...', status: 'pending' },
-  { id: '3', title: 'Acting', detail: 'Running workflows...', status: 'pending' },
-  { id: '4', title: 'Responding', detail: 'Preparing answer...', status: 'pending' },
+  { id: '1', title: 'Understanding Query', detail: 'Waiting for input...', status: 'pending' },
+  { id: '2', title: 'Fetching Data', detail: 'Waiting...', status: 'pending' },
+  { id: '3', title: 'Analyzing', detail: 'Waiting...', status: 'pending' },
+  { id: '4', title: 'Generating Response', detail: 'Waiting...', status: 'pending' },
 ];
 
-const useUIStore = create((set) => ({
-  // --- UI toggles ---
-  showAnnotations: true,
-  toggleAnnotations: () => set((state) => ({ showAnnotations: !state.showAnnotations })),
+const createNewConversation = () => ({
+  id: generateId(),
+  title: 'New Conversation',
+  createdAt: new Date().toISOString(),
+  messages: [],
+});
 
-  sidebarOpen: true,
-  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+const useUIStore = create(
+  persist(
+    (set, get) => ({
+      // --- UI toggles ---
+      showAnnotations: true,
+      toggleAnnotations: () => set((state) => ({ showAnnotations: !state.showAnnotations })),
 
-  // --- AI Assistant chat state (persists across navigation) ---
-  chatMessages: [INITIAL_MESSAGE],
-  chatInput: '',
-  chatIsProcessing: false,
-  chatProcessSteps: INITIAL_STEPS,
+      sidebarOpen: true,
+      toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
 
-  setChatMessages: (updater) =>
-    set((state) => ({
-      chatMessages: typeof updater === 'function' ? updater(state.chatMessages) : updater,
-    })),
-
-  setChatInput: (value) => set({ chatInput: value }),
-
-  setChatIsProcessing: (value) => set({ chatIsProcessing: value }),
-
-  setChatProcessSteps: (updater) =>
-    set((state) => ({
-      chatProcessSteps:
-        typeof updater === 'function' ? updater(state.chatProcessSteps) : updater,
-    })),
-
-  updateChatStep: (id, status, detail) =>
-    set((state) => ({
-      chatProcessSteps: state.chatProcessSteps.map((step) =>
-        step.id === id ? { ...step, status, detail: detail || step.detail } : step
-      ),
-    })),
-
-  resetChatSteps: () => set({ chatProcessSteps: INITIAL_STEPS }),
-
-  clearChat: () =>
-    set({
-      chatMessages: [INITIAL_MESSAGE],
+      // --- AI Assistant chat state ---
+      chatHistory: [],
+      activeConversationId: null,
       chatInput: '',
       chatIsProcessing: false,
       chatProcessSteps: INITIAL_STEPS,
+
+      // Derived: get messages for the active conversation
+      getChatMessages: () => {
+        const state = get();
+        const conv = state.chatHistory.find((c) => c.id === state.activeConversationId);
+        return conv ? conv.messages : [];
+      },
+
+      setChatInput: (value) => set({ chatInput: value }),
+      setChatIsProcessing: (value) => set({ chatIsProcessing: value }),
+
+      setChatProcessSteps: (updater) =>
+        set((state) => ({
+          chatProcessSteps:
+            typeof updater === 'function' ? updater(state.chatProcessSteps) : updater,
+        })),
+
+      updateChatStep: (id, status, detail) =>
+        set((state) => ({
+          chatProcessSteps: state.chatProcessSteps.map((step) =>
+            step.id === id ? { ...step, status, detail: detail || step.detail } : step
+          ),
+        })),
+
+      resetChatSteps: () => set({ chatProcessSteps: INITIAL_STEPS }),
+
+      // Add a message — preserve timestamp if already set
+      addMessage: (message) =>
+        set((state) => {
+          const msgWithTime = {
+            ...message,
+            timestamp: message.timestamp || new Date().toISOString(),
+          };
+          return {
+            chatHistory: state.chatHistory.map((conv) => {
+              if (conv.id !== state.activeConversationId) return conv;
+              const updatedMessages = [...conv.messages, msgWithTime];
+              const title =
+                conv.title === 'New Conversation' && message.role === 'user'
+                  ? message.text.slice(0, 40) + (message.text.length > 40 ? '…' : '')
+                  : conv.title;
+              return { ...conv, messages: updatedMessages, title };
+            }),
+          };
+        }),
+
+      // Update messages in active conversation (for streaming)
+      setChatMessages: (updater) =>
+        set((state) => ({
+          chatHistory: state.chatHistory.map((conv) => {
+            if (conv.id !== state.activeConversationId) return conv;
+            const newMessages =
+              typeof updater === 'function' ? updater(conv.messages) : updater;
+            const firstUser = newMessages.find((m) => m.role === 'user');
+            const title =
+              firstUser && conv.title === 'New Conversation'
+                ? firstUser.text.slice(0, 40) + (firstUser.text.length > 40 ? '…' : '')
+                : conv.title;
+            return { ...conv, messages: newMessages, title };
+          }),
+        })),
+
+      // Start a brand-new conversation and make it active
+      startNewConversation: () => {
+        const newConv = createNewConversation();
+        set((state) => ({
+          chatHistory: [newConv, ...state.chatHistory],
+          activeConversationId: newConv.id,
+          chatInput: '',
+          chatIsProcessing: false,
+          chatProcessSteps: INITIAL_STEPS,
+        }));
+        return newConv.id;
+      },
+
+      // Switch to an existing conversation
+      switchConversation: (id) =>
+        set({
+          activeConversationId: id,
+          chatInput: '',
+          chatIsProcessing: false,
+          chatProcessSteps: INITIAL_STEPS,
+        }),
+
+      clearChat: () =>
+        set((state) => ({
+          chatHistory: state.chatHistory.map((conv) =>
+            conv.id === state.activeConversationId
+              ? { ...conv, messages: [], title: 'New Conversation' }
+              : conv
+          ),
+          chatInput: '',
+          chatIsProcessing: false,
+          chatProcessSteps: INITIAL_STEPS,
+        })),
     }),
-}));
+    {
+      name: 'ui-store',
+      // Only persist what needs to survive a refresh — skip transient processing state
+      partialize: (state) => ({
+        chatHistory: state.chatHistory,
+        activeConversationId: state.activeConversationId,
+        showAnnotations: state.showAnnotations,
+        sidebarOpen: state.sidebarOpen,
+      }),
+    }
+  )
+);
 
 export default useUIStore;

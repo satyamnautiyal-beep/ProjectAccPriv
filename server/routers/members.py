@@ -154,6 +154,7 @@ async def assistant_chat_llm(req: LLMChatRequest):
     batches = summary.get("batches", [])
 
     system_context = (
+        f"Today's date: {datetime.utcnow().strftime('%Y-%m-%d')}. "
         f"Ready: {member_counts.get('Ready', 0)}, "
         f"Pending Validation: {member_counts.get('Pending Business Validation', 0)}, "
         f"Awaiting Clarification: {member_counts.get('Awaiting Clarification', 0)}, "
