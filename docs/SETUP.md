@@ -1,119 +1,215 @@
-# 🚀 HealthEnroll Agentic AI - Setup Guide
+# HealthEnroll — Setup Guide
 
-This guide will walk you through setting up the HealthEnroll project on your local machine for the first time. The application consists of a **Next.js** frontend and a **FastAPI** backend, utilizing **MongoDB** for data persistence.
-
----
-
-## 📋 Prerequisites
-
-Ensure you have the following installed on your system:
-- **Python 3.9+**
-- **Node.js 18+** (with npm)
-- **MongoDB** (Local Community Edition or MongoDB Atlas connection string)
-- **Git**
+Full-stack agentic enrollment platform. Next.js 16 frontend + FastAPI backend + MongoDB + AI Refinery.
 
 ---
 
-## 🛠️ Step 1: Initial Repository Setup
+## Prerequisites
 
-1. **Clone the repository** (if you haven't already):
-   ```bash
-   git clone <repository_url>
-   cd ProjAccPriv
-   ```
-
-2. **Configure Environment Variables**:
-   Copy the example environment file and fill in your local details:
-   ```bash
-   cp .env.example .env
-   ```
-   *Edit `.env` and ensure `MONGO_URI` points to your MongoDB instance (default: `mongodb://localhost:27017`) and `MONGO_DB_NAME` is set to `health_enroll`.*
+| Tool | Version | Notes |
+|------|---------|-------|
+| Python | 3.10+ | 3.10 minimum — async patterns require it |
+| Node.js | 18+ | With npm |
+| MongoDB | 6+ | Local Community Edition or Atlas URI |
+| Git | any | |
+| AI Refinery account | — | Get API key from https://sdk.airefinery.accenture.com |
 
 ---
 
-## 🐍 Step 2: Backend Setup (Python)
+## 1. Clone & configure environment
 
-1. **Create a Virtual Environment**:
-   ```bash
-   python -m venv venv
-   ```
+```bash
+git clone <repository_url>
+cd <repo-folder>
+cp .env.example .env
+```
 
-2. **Activate the Virtual Environment**:
-   - **Windows**: `venv\Scripts\activate`
-   - **macOS/Linux**: `source venv/bin/activate`
+Open `.env` and fill in:
 
-3. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+- `AI_REFINERY_KEY` — **required**. Your key from the AI Refinery portal.
+- `MONGO_URI` — MongoDB connection string. Default `mongodb://localhost:27017` works for local installs.
+- `OEP_START_DATE` / `OEP_END_DATE` — set to the current open enrollment window. Controls whether the AI pipeline treats member changes as SEP or OEP.
 
----
-
-## ⚛️ Step 3: Frontend Setup (Next.js)
-
-1. **Navigate to the client directory**:
-   ```bash
-   cd client
-   ```
-
-2. **Install Node dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Return to the root directory**:
-   ```bash
-   cd ..
-   ```
+Everything else has sensible defaults and can be left as-is to start.
 
 ---
 
-## 📊 Step 4: MongoDB Setup
+## 2. Backend setup
 
-1. **Start MongoDB**: Ensure your local MongoDB service is running (e.g., via MongoDB Compass or terminal).
-2. **Initial Structure**: The application will automatically create the `health_enroll` database and necessary collections (`members`, `batches`) upon first use.
+All commands run from the **repo root**.
+
+```bash
+# Create and activate virtual environment
+python -m venv venv
+
+# Windows
+venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
+
+# Install dependencies
+pip install -r server/requirements.txt
+```
 
 ---
 
-## 🏃 Step 5: Running the Application
+## 3. Frontend setup
 
-To run the full platform, you need to start both the backend and frontend servers simultaneously.
+```bash
+cd client
+npm install
+cd ..
+```
 
-### 1. Start the Backend (FastAPI)
-Open a terminal in the **root directory** (with `venv` activated):
+---
+
+## 4. MongoDB
+
+Start your local MongoDB service before running the backend. The app auto-creates the `health_enroll` database and `members` / `batches` collections on first use.
+
+**Local (Windows):**
+```bash
+net start MongoDB
+```
+
+**Local (macOS):**
+```bash
+brew services start mongodb-community
+```
+
+**Atlas:** just set `MONGO_URI` in `.env` to your Atlas connection string — no local install needed.
+
+---
+
+## 5. Run the application
+
+You need two terminals running simultaneously.
+
+**Terminal 1 — Backend** (from repo root, venv activated):
 ```bash
 uvicorn server.main:app --reload
 ```
-- The backend will be available at: `http://localhost:8000`
-- API Documentation (Swagger): `http://localhost:8000/docs`
+- API: `http://localhost:8000`
+- Swagger docs: `http://localhost:8000/docs`
 
-### 2. Start the Frontend (Next.js)
-Open a **new** terminal in the `client` directory:
+**Terminal 2 — Frontend** (from repo root):
 ```bash
-npm run dev
+cd client && npm run dev
 ```
-- The frontend will be available at: `http://localhost:3000`
+- App: `http://localhost:3000`
+
+**Login credentials (demo):**
+- Email: `admin@demo.com`
+- Password: `admin123`
 
 ---
 
-## 🧪 Testing the Workflow
+## 6. Test the workflow
 
-1. Open `http://localhost:3000` in your browser.
-2. Go to **Inbound Gateway** (Subscriber Onboarding).
-3. Upload an EDI 834 file (you can find samples in `synthetic_data/`).
-4. Click **Check Path Integrity** to parse the file into the database.
-5. Navigate to the **Integrity Workbench** to review and validate member records.
-6. Use **Release Staging** to bundle members into enrollment batches.
+Sample EDI 834 files are in `test_data/demo/`. Two categories:
+
+- `test_data/demo/non_sep/` — standard OEP members, should enroll cleanly
+- `test_data/demo/sep/` — SEP members (household change, move, loss of coverage), triggers evidence check
+
+### Manual workflow (UI)
+
+1. **Batch Onboard** — upload `.edi` files, click "Check Batch Health" to validate and ingest
+2. **Integrity Workbench** — review members, click "Run Business Validation"
+3. **Release Staging** — generate a batch from Ready members, click "Initiate Enrollment"
+4. **Approval** — approve or hold batches before release
+5. **Enrollment Monitoring** — track batch status
+
+### AI Assistant workflow
+
+Open the **AI Assistant** page and chat naturally:
+- *"Check for new EDI files"*
+- *"Run business validation"*
+- *"Create a batch and process it"*
+- *"Show me the current system status"*
+
+The assistant uses AI Refinery tool-calling to execute real actions. Chat history persists across page navigation.
 
 ---
 
-## 🔍 Troubleshooting
+## 7. Project structure
 
-- **MongoDB Connection Error**: Check your `.env` file and verify that the MongoDB service is active.
-- **Next.js Missing Modules**: If you see "Module not found", run `npm install` again inside the `client` folder.
-- **Python Imports**: Ensure you always run the backend with the virtual environment activated.
+```
+├── server/                  # FastAPI backend
+│   ├── main.py              # App entry point
+│   ├── business_logic.py    # Member validation rules
+│   ├── edi_validator.py     # EDI structural checks
+│   ├── database.py          # Data directory config
+│   ├── requirements.txt
+│   ├── routers/
+│   │   ├── members.py       # Members + LLM chat endpoint
+│   │   ├── batches.py       # Batch create/approve/initiate
+│   │   ├── files.py         # EDI upload/check/reject
+│   │   ├── clarifications.py
+│   │   ├── metrics.py
+│   │   └── auth.py
+│   └── ai/
+│       ├── agent.py         # AI Refinery enrollment pipeline
+│       ├── chat_agent.py    # LLM chat agent with tool calling
+│       ├── config.yaml      # Distiller project config
+│       ├── email_agent.py   # SEP email drafting
+│       ├── sep_required_docs.json
+│       └── mock_submitted_docs.json
+├── client/                  # Next.js 16 frontend
+│   └── src/
+│       ├── app/             # Page routes
+│       ├── components/      # Shared components + layout
+│       └── store/           # Zustand global state
+├── db/                      # MongoDB utilities
+├── data/                    # EDI data directory (gitignored)
+├── test_data/demo/          # Sample EDI files for testing
+├── parser.py                # EDI 834 parser
+└── .env.example
+```
 
 ---
 
-**Developed for Accenture - ProjAccPriv**  
-*Agentic AI Framework for Automated EDI Enrollment Analytics*
+## 8. Member status flow
+
+```
+Upload EDI → Pending Business Validation
+                ↓
+         Business Validation
+          ↙              ↘
+       Ready        Awaiting Clarification
+         ↓
+      In Batch (batch created)
+         ↓
+   AI Enrollment Pipeline
+    ↙          ↓          ↘
+Enrolled   Enrolled (SEP)  In Review
+(OEP)      evidence complete  (SEP missing docs
+                               or hard blocks)
+```
+
+`Processing Failed` — pipeline error, use "Retry failed members" in the AI assistant.
+
+---
+
+## 9. Troubleshooting
+
+**`AI_REFINERY_KEY` missing error**
+The backend will refuse to start the chat agent. Set the key in `.env`.
+
+**MongoDB connection refused**
+Make sure MongoDB is running before starting the backend. Check with `mongosh` or MongoDB Compass.
+
+**`asyncio.run() cannot be called from a running event loop`**
+Never call `asyncio.run()` inside FastAPI route handlers — use `await` directly. This is already handled in the codebase.
+
+**Members stuck as `"In Batch"` after processing**
+The pipeline sweep handles this automatically — stuck members are marked `"Processing Failed"`. Use the AI assistant to retry them.
+
+**`pyx12` or `google-cloud-storage` import errors**
+These are removed from `requirements.txt`. If you have an older install, run `pip install -r server/requirements.txt` again.
+
+**Next.js `Module not found`**
+Run `npm install` inside the `client/` folder.
+
+**OEP dates not set**
+If `OEP_START_DATE` / `OEP_END_DATE` are blank, `is_within_oep()` returns `None` and the pipeline treats all SEP candidates as requiring evidence check regardless of timing. Set them to your actual enrollment window.
