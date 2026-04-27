@@ -14,12 +14,14 @@ import { useQuery } from '@tanstack/react-query';
 // Colour palette — one distinct colour per member status
 // ---------------------------------------------------------------------------
 const STATUS_COLORS = {
-  'Enrolled (OEP)':          '#22c55e',   // green
-  'Enrolled (SEP)':          '#16a34a',   // dark green
-  'In Review':               '#3b82f6',   // blue
-  'Pending':                 '#6366f1',   // indigo
-  'Awaiting Clarification':  '#f59e0b',   // amber
-  'Processing Failed':       '#ef4444',   // red
+  'Enrolled (OEP)':          '#22c55e',
+  'Enrolled (SEP)':          '#16a34a',
+  'In Review':               '#3b82f6',
+  'In Batch':                '#8b5cf6',
+  'Ready':                   '#06b6d4',
+  'Pending Validation':      '#6366f1',
+  'Awaiting Clarification':  '#f59e0b',
+  'Processing Failed':       '#ef4444',
 };
 
 // ---------------------------------------------------------------------------
@@ -122,10 +124,10 @@ export default function DashboardPage() {
   // ---- Funnel data ----
   const funnelData = [
     { label: 'Files Received',       value: kpis.filesToday,          color: '#3b82f6' },
-    { label: 'Under Review',         value: kpis.membersIdentified,   color: '#6366f1' },
-    { label: 'Needs Attention',      value: kpis.pendingCount,        color: '#f59e0b' },
-    { label: 'Ready for Enrollment', value: kpis.readyCount,          color: '#22c55e' },
-    { label: 'Enrolled',             value: kpis.completedBatches * 50, color: '#10b981' },
+    { label: 'Members Identified',   value: kpis.membersIdentified,   color: '#6366f1' },
+    { label: 'Pending Validation',   value: kpis.pendingCount,        color: '#8b5cf6' },
+    { label: 'Ready for Enrollment', value: kpis.readyCount,          color: '#06b6d4' },
+    { label: 'Enrolled',             value: kpis.enrolledCount,       color: '#22c55e' },
   ];
   const maxFunnelValue = Math.max(...funnelData.map(d => d.value), 1);
 
@@ -187,9 +189,7 @@ export default function DashboardPage() {
               <span>Members Awaiting Clarification</span>
               <AlertTriangle className={styles.kpiIcon} size={20} style={{ color: 'var(--warning)', background: 'var(--warning-light)' }} />
             </div>
-            <div className={styles.kpiValue}>
-              {kpis.awaitingClarification > 0 ? kpis.awaitingClarification : kpis.pendingCount}
-            </div>
+            <div className={styles.kpiValue}>{kpis.awaitingClarification}</div>
           </div>
           <div className={styles.kpiCard}>
             <div className={styles.kpiHeader}>
@@ -203,7 +203,7 @@ export default function DashboardPage() {
               <span>Completed Enrollments</span>
               <ShieldCheck className={styles.kpiIcon} size={20} style={{ color: 'var(--success)', background: 'var(--success-light)' }} />
             </div>
-            <div className={styles.kpiValue}>{kpis.completedBatches}</div>
+            <div className={styles.kpiValue}>{kpis.enrolledCount}</div>
           </div>
         </div>
       </Annotation>

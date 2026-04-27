@@ -171,6 +171,8 @@ Tool rules:
 - When the user asks to check batch status, call get_batch_result with the batch_id.
 - Only call get_system_status when the user explicitly asks for status, overview, or current state.
 - When calling get_system_status, pass the specific query: 'edi_files', 'pending_validation', 'ready', 'clarifications', 'enrolled', 'in_review', 'failed', 'batches', or 'all'.
+- Call get_enrolled_members when the user asks who was enrolled, how many people enrolled today/this week, or wants a list of enrolled members. Pass today's date (YYYY-MM-DD) when they say "today".
+- Call get_subscriber_details when the user asks about a specific subscriber ID — their status, last update, dependents, coverage, or any details about a named member.
 - For conversational messages (greetings, questions, explanations) — respond directly, do NOT call any tool.
 
 Member statuses: Pending Business Validation → Ready / Awaiting Clarification → In Batch → Enrolled / Enrolled (SEP) / In Review / Processing Failed
@@ -330,6 +332,52 @@ TOOLS = [
                 "to retry failed members. Returns count of members re-queued."
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_enrolled_members",
+            "description": (
+                "Returns a list of enrolled members (status 'Enrolled' or 'Enrolled (SEP)'). "
+                "Use when the user asks who was enrolled today, this week, or in general. "
+                "Optionally filter by date (YYYY-MM-DD) to see enrollments processed on that day. "
+                "Returns name, subscriber_id, status, enrollment path, and last processed date."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": (
+                            "Filter by lastProcessedAt date (YYYY-MM-DD). "
+                            "Pass today's date to see today's enrollments. Leave empty for all enrolled members."
+                        ),
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_subscriber_details",
+            "description": (
+                "Looks up a specific subscriber by their subscriber ID and returns full details: "
+                "current status, last updated date, coverage info, dependents (name, DOB, gender, age), "
+                "and any validation issues. Use when the user asks about a specific member or subscriber ID."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "subscriber_id": {
+                        "type": "string",
+                        "description": "The subscriber ID to look up (e.g. EMP00030).",
+                    }
+                },
+                "required": ["subscriber_id"],
+            },
         },
     },
 ]
@@ -583,6 +631,115 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                     f"{len(ids)} member(s) re-queued as Ready. "
                     "Create a new batch to include them in the next enrollment run."
                 ),
+            })
+
+        elif name == "get_enrolled_members":
+            from db.mongo_connection import get_database
+            db = get_database()
+            if db is None:
+                return json.dumps({"error": "Database not available"})
+
+            date_filter = args.get("date", "").strip()
+            query = {"status": {"$in": ["Enrolled", "Enrolled (SEP)"]}}
+
+            members = list(db.members.find(query, {"_id": 0}))
+
+            # Filter by date if provided (match on lastProcessedAt prefix)
+            if date_filter:
+                members = [
+                    m for m in members
+                    if (m.get("lastProcessedAt") or "").startswith(date_filter)
+                ]
+
+            result = []
+            for m in members:
+                latest_date = m.get("latest_update")
+                snapshot = (m.get("history") or {}).get(latest_date, {})
+                info = snapshot.get("member_info") or {}
+                dependents = snapshot.get("dependents") or []
+                coverages = snapshot.get("coverages") or []
+
+                name_str = " ".join(filter(None, [info.get("first_name"), info.get("last_name")])) or "Unknown"
+                result.append({
+                    "subscriber_id": m.get("subscriber_id"),
+                    "name": name_str,
+                    "status": m.get("status"),
+                    "enrollment_path": (m.get("markers") or {}).get("enrollment_path", "OEP"),
+                    "last_processed": m.get("lastProcessedAt", "")[:10] if m.get("lastProcessedAt") else "—",
+                    "plan_code": (coverages[0].get("plan_code") if coverages else None) or "—",
+                    "dependents_count": len(dependents),
+                })
+
+            return json.dumps({
+                "total": len(result),
+                "date_filter": date_filter or "all",
+                "members": result,
+            })
+
+        elif name == "get_subscriber_details":
+            from db.mongo_connection import get_database
+            from datetime import datetime as _datetime
+            db = get_database()
+            if db is None:
+                return json.dumps({"error": "Database not available"})
+
+            subscriber_id = args.get("subscriber_id", "").strip()
+            if not subscriber_id:
+                return json.dumps({"error": "subscriber_id is required"})
+
+            m = db.members.find_one({"subscriber_id": subscriber_id}, {"_id": 0})
+            if not m:
+                return json.dumps({"error": f"No member found with subscriber_id '{subscriber_id}'"})
+
+            latest_date = m.get("latest_update")
+            snapshot = (m.get("history") or {}).get(latest_date, {})
+            info = snapshot.get("member_info") or {}
+            dependents = snapshot.get("dependents") or []
+            coverages = snapshot.get("coverages") or []
+
+            def calc_age(dob_str):
+                if not dob_str:
+                    return None
+                try:
+                    dob = _datetime.strptime(dob_str, "%Y-%m-%d")
+                    return int(((_datetime.utcnow() - dob).days) / 365.25)
+                except Exception:
+                    return None
+
+            dep_list = []
+            for dep in dependents:
+                di = dep.get("member_info") or {}
+                dep_list.append({
+                    "name": " ".join(filter(None, [di.get("first_name"), di.get("last_name")])) or "Unknown",
+                    "dob": di.get("dob") or "—",
+                    "age": calc_age(di.get("dob")),
+                    "gender": "Male" if di.get("gender") == "M" else "Female" if di.get("gender") == "F" else di.get("gender") or "—",
+                    "relationship_code": di.get("relationship_code") or "—",
+                })
+
+            coverage_list = []
+            for cov in coverages:
+                coverage_list.append({
+                    "plan_code": cov.get("plan_code") or "—",
+                    "coverage_start": cov.get("coverage_start_date") or "—",
+                    "coverage_end": cov.get("coverage_end_date") or "—",
+                })
+
+            return json.dumps({
+                "subscriber_id": m.get("subscriber_id"),
+                "name": " ".join(filter(None, [info.get("first_name"), info.get("last_name")])) or "Unknown",
+                "status": m.get("status"),
+                "last_updated": m.get("latest_update") or "—",
+                "last_validated": (m.get("lastValidatedAt") or "")[:10] or "—",
+                "last_processed": (m.get("lastProcessedAt") or "")[:10] or "—",
+                "batch_id": m.get("batch_id") or "—",
+                "enrollment_path": (m.get("markers") or {}).get("enrollment_path", "—"),
+                "validation_issues": m.get("validation_issues") or [],
+                "coverages": coverage_list,
+                "dependents_count": len(dep_list),
+                "dependents": dep_list,
+                "employer": info.get("employer_name") or "—",
+                "insurer": info.get("insurer_name") or "—",
             })
 
         else:
