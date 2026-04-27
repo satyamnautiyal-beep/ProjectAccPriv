@@ -1,0 +1,64 @@
+{
+  "subscriber_id": "EMPTEST0004",
+  "history": {
+    "2026-03-30": {
+      "_is_sub": true,
+      "member_info": {
+        "subscriber_indicator": "Y",
+        "relationship_code": "18",
+        "employment_status": "030",
+        "subscriber_id": "EMPTEST0004",
+        "first_name": "Neha",
+        "last_name": "Sharma",
+        "ssn": "9100000404",
+        "dob": "1991-11-22",
+        "gender": "F",
+        "address_line_1": "12 OLD AIRPORT ROAD",
+        "city": "Bangalore",
+        "state": "KA",
+        "zip": "560017",
+        "employer_name": "ABC CORPORATION",
+        "employer_id": "123456789",
+        "insurer_name": "ABC HEALTH INSURANCE",
+        "insurer_id": "987654321"
+      },
+      "coverages": [
+        { "coverage_type": "030", "plan_code": "HLT", "coverage_start_date": "2026-04-01" }
+      ],
+      "dependents": [],
+      "subscriber_id": "EMPTEST0004",
+      "status": "Validated"
+    },
+    "2026-04-22": {
+      "_is_sub": true,
+      "member_info": {
+        "subscriber_indicator": "Y",
+        "relationship_code": "18",
+        "employment_status": "030",
+        "subscriber_id": "EMPTEST0004",
+        "first_name": "Neha",
+        "last_name": "Sharma",
+        "ssn": "9100000404",
+        "dob": "1991-11-22",
+        "gender": "F",
+        "address_line_1": "88 CHURCH STREET",
+        "city": "Mumbai",
+        "state": "MH",
+        "zip": "400001",
+        "employer_name": "ABC CORPORATION",
+        "employer_id": "123456789",
+        "insurer_name": "ABC HEALTH INSURANCE",
+        "insurer_id": "987654321"
+      },
+      "coverages": [
+        { "coverage_type": "030", "plan_code": "HLT", "coverage_start_date": "2026-04-01" }
+      ],
+      "dependents": [],
+      "subscriber_id": "EMPTEST0004",
+      "status": "Pending Business Validation"
+    }
+  },
+  "latest_update": "2026-04-22",
+  "status": "Ready",
+  "validation_issues": []
+}

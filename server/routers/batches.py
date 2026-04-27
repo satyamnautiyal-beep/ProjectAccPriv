@@ -4,7 +4,7 @@ from datetime import datetime
 import time
 
 from db.mongo_connection import get_database
-from server.agents.enrollment_intelligence_runner import process_records_batch
+from server.ai.agent import process_records_batch
 
 router = APIRouter(prefix="/api")
 

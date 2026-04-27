@@ -6,6 +6,7 @@ import random
 from datetime import datetime
 from db.mongo_connection import save_member_to_mongo
 from parser import parse_edi
+from server.edi_validator import check_edi_structure
 
 router = APIRouter(prefix="/api")
 
@@ -71,49 +72,6 @@ async def upload_file(file: UploadFile = File(...)):
     
     return {"success": True, "fileId": file_id}
 
-def check_file_integrity(filepath):
-    """
-    Physically validates the EDI file structure and envelopes.
-    """
-    try:
-        if not os.path.exists(filepath):
-            return "File Missing"
-        
-        with open(filepath, 'r') as f:
-            content = f.read().strip()
-            # Split into segments by the standard X12 terminator '~'
-            segments = [s.strip() for s in content.split('~') if s.strip()]
-            
-            if not segments:
-                return "Empty File"
-
-            # 1. ISA/IEA Envelope Check
-            if not segments[0].startswith('ISA'):
-                return "Missing ISA Header"
-            if not segments[-1].startswith('IEA'):
-                return "Missing IEA Trailer"
-
-            # 2. Segment Splitting for Control Number check
-            isa_elements = segments[0].split('*')
-            iea_elements = segments[-1].split('*')
-
-            if len(isa_elements) < 14:
-                return "Truncated ISA Segment"
-            if len(iea_elements) < 3:
-                return "Truncated IEA Segment"
-
-            # 3. Control Number Integrity Check
-            # ISA13 must match IEA02
-            isa_control = isa_elements[13].strip()
-            iea_control = iea_elements[2].strip()
-
-            if isa_control != iea_control:
-                return f"Control Number Mismatch (ISA:{isa_control} != IEA:{iea_control})"
-
-            return "Healthy"
-    except Exception as e:
-        return f"Structure Error: {str(e)}"
-
 @router.post("/check-structure")
 def check_structure():
     target_dir = get_todays_dir()
@@ -140,7 +98,9 @@ def check_structure():
         st = statuses.get(fname, {"status": "Unchecked", "id": str(int(time.time()*1000))})
         
         # Call the real validator
-        validation_status = check_file_integrity(filepath)
+        with open(filepath, 'r') as f:
+            edi_text = f.read()
+        validation_status = check_edi_structure(edi_text)
         
         st["status"] = validation_status
         if validation_status == "Healthy":

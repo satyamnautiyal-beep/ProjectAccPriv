@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from datetime import datetime
 from db.mongo_connection import get_database
 from server.business_logic import validate_member_record
-from server.agents.enrollment_intelligence_runner import orchestrate_enrollment
+from server.ai.agent import orchestrate_enrollment
 
 router = APIRouter(prefix="/api")
 
