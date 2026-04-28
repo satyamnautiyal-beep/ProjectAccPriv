@@ -60,6 +60,7 @@ export default function AIAssistantPage() {
     switchConversation,
   } = useUIStore();
 
+  const [mounted, setMounted] = React.useState(false);
   const messagesEndRef = useRef(null);
   const abortControllerRef = useRef(null);
   const inputRef = useRef(null);
@@ -67,12 +68,16 @@ export default function AIAssistantPage() {
   const chatMessages = getChatMessages();
   const hasMessages = chatMessages.length > 0;
 
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // On first mount, start a conversation if none is active
   useEffect(() => {
-    if (!activeConversationId) {
+    if (mounted && !activeConversationId) {
       startNewConversation();
     }
-  }, []);
+  }, [mounted]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -232,6 +237,8 @@ export default function AIAssistantPage() {
     startNewConversation();
     inputRef.current?.focus();
   };
+
+  if (!mounted) return null;
 
   return (
     <div className={styles.pageWrapper}>

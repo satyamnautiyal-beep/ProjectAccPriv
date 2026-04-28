@@ -325,6 +325,31 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_enrolled_members",
+            "description": (
+                "Queries MongoDB for enrolled members. Can filter by date and enrollment path. "
+                "Use this when the user asks who was enrolled, how many enrolled today/yesterday, "
+                "SEP vs OEP breakdowns, or any question about enrolled member details."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Filter by lastProcessedAt date. Format YYYY-MM-DD. Leave empty for all time.",
+                    },
+                    "enrollment_path": {
+                        "type": "string",
+                        "description": "Filter by 'OEP', 'SEP', or leave empty for both.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "retry_failed_members",
             "description": (
                 "Re-queues all members with status 'Processing Failed' back to 'Ready' "
@@ -602,6 +627,59 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             from server.routers.clarifications import read_clarifications
             result = read_clarifications()
             return json.dumps(result[:20])
+
+        elif name == "get_enrolled_members":
+            from db.mongo_connection import get_database
+            db = get_database()
+            if db is None:
+                return json.dumps({"error": "Database not available"})
+
+            query: Dict[str, Any] = {
+                "status": {"$in": ["Enrolled", "Enrolled (SEP)"]}
+            }
+
+            date_filter = args.get("date", "").strip()
+            if date_filter:
+                # Match on lastProcessedAt date prefix (YYYY-MM-DD)
+                query["lastProcessedAt"] = {"$regex": f"^{date_filter}"}
+
+            enrollment_path = args.get("enrollment_path", "").strip().upper()
+            if enrollment_path == "SEP":
+                query["status"] = "Enrolled (SEP)"
+            elif enrollment_path == "OEP":
+                query["status"] = "Enrolled"
+
+            members = list(db.members.find(query, {
+                "_id": 0,
+                "subscriber_id": 1,
+                "status": 1,
+                "lastProcessedAt": 1,
+                "markers": 1,
+                "history": 1,
+            }))
+
+            # Extract name from latest history snapshot
+            results = []
+            for m in members:
+                history = m.get("history", {})
+                latest_date = max(history.keys()) if history else None
+                info = history[latest_date].get("member_info", {}) if latest_date else {}
+                first = info.get("first_name", "")
+                last = info.get("last_name", "")
+                results.append({
+                    "subscriber_id": m["subscriber_id"],
+                    "name": f"{first} {last}".strip() or "Unknown",
+                    "status": m.get("status"),
+                    "enrollment_path": m.get("markers", {}).get("enrollment_path", "OEP"),
+                    "lastProcessedAt": (m.get("lastProcessedAt") or "")[:10],
+                })
+
+            return json.dumps({
+                "total": len(results),
+                "date_filter": date_filter or "all time",
+                "enrollment_path_filter": enrollment_path or "all",
+                "members": results,
+            })
 
         elif name == "retry_failed_members":
             from db.mongo_connection import get_database
