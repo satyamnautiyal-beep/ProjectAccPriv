@@ -4,10 +4,13 @@
     "Date of move"
   ],
   "Household change (marriage/birth/adoption/divorce)": [
-    "Marriage certificate or birth/adoption record"
+    "Marriage certificate",
+    "Birth certificate",
+    "Adoption record",
+    "Divorce decree"
   ],
   "Loss of coverage": [
     "Termination letter",
-    "Prior coverage end"
+    "Prior coverage end date"
   ]
 }

@@ -555,7 +555,7 @@ async def DecisionAgent(query: str, **kwargs) -> str:
     })
 
 
-# ✅ Evidence Check Agent (NEW)
+# Evidence Check Agent
 async def EvidenceCheckAgent(query: str, **kwargs) -> str:
     """
     Input:
@@ -608,8 +608,37 @@ async def EvidenceCheckAgent(query: str, **kwargs) -> str:
             "warnings": warnings
         })
 
-    missing_docs = [d for d in required_docs if d not in submitted_docs]
-    evidence_complete = len(missing_docs) == 0
+    # Normalise for case-insensitive substring matching
+    submitted_lower = [s.lower() for s in submitted_docs]
+
+    def _doc_satisfied(required: str) -> bool:
+        """
+        A required doc is satisfied if any submitted doc is a case-insensitive
+        substring match in either direction (submitted contains required keyword
+        or required contains submitted keyword).
+        """
+        req_lower = required.lower()
+        return any(
+            req_lower in s or s in req_lower
+            for s in submitted_lower
+        )
+
+    # Household-change SEP: member needs to submit ONE of the listed docs (any one suffices)
+    # All other SEP types: member must submit ALL listed docs
+    household_sep_types = {"household change", "marriage", "birth", "adoption", "divorce"}
+    is_any_one_sufficient = any(kw in (sep_type or "").lower() for kw in household_sep_types)
+
+    if is_any_one_sufficient:
+        # Evidence complete if at least one required doc is satisfied
+        satisfied = [d for d in required_docs if _doc_satisfied(d)]
+        # missing_docs = docs that weren't submitted (informational only — not blocking)
+        not_submitted = [d for d in required_docs if not _doc_satisfied(d)]
+        missing_docs = [] if satisfied else not_submitted  # empty when evidence is complete
+        evidence_complete = len(satisfied) > 0
+    else:
+        # Evidence complete only if ALL required docs are satisfied
+        missing_docs = [d for d in required_docs if not _doc_satisfied(d)]
+        evidence_complete = len(missing_docs) == 0
 
     email_triggered = not evidence_complete
     email_reason = None

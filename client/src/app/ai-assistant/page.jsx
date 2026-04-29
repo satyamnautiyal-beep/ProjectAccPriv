@@ -227,8 +227,10 @@ export default function AIAssistantPage() {
     streamLLMChat(text);
   };
 
-  const handleActionSuggestion = (action) => {
-    const message = ACTION_TEXT[action] || action;
+  const handleActionSuggestion = (suggestion) => {
+    // Use the button's display text directly — don't remap through ACTION_TEXT
+    // This ensures "Check batch result" sends exactly that, not "Process batch..."
+    const message = suggestion.text || ACTION_TEXT[suggestion.action] || suggestion.action;
     addMessage({ id: generateId(), role: 'user', text: message });
     streamLLMChat(message);
   };
@@ -332,7 +334,7 @@ export default function AIAssistantPage() {
                           <button
                             key={idx}
                             className={styles.suggestionButton}
-                            onClick={() => handleActionSuggestion(suggestion.action)}
+                            onClick={() => handleActionSuggestion(suggestion)}
                             disabled={chatIsProcessing}
                           >
                             {suggestion.text}

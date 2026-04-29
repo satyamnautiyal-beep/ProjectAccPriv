@@ -171,8 +171,10 @@ Tool rules:
 - When the user asks to check batch status, call get_batch_result with the batch_id.
 - Only call get_system_status when the user explicitly asks for status, overview, or current state.
 - When calling get_system_status, pass the specific query: 'edi_files', 'pending_validation', 'ready', 'clarifications', 'enrolled', 'in_review', 'failed', 'batches', or 'all'.
+- Call get_clarifications when the user asks about members needing attention, clarification issues, member names with problems, what issues exist, or anything about "Awaiting Clarification" members. This returns real names and exact issues from MongoDB — never use get_system_status for this.
 - Call get_enrolled_members when the user asks who was enrolled, how many people enrolled today/this week, or wants a list of enrolled members. Pass today's date (YYYY-MM-DD) when they say "today".
-- Call get_subscriber_details when the user asks about a specific subscriber ID — their status, last update, dependents, coverage, or any details about a named member.
+- Call get_subscriber_details when the user asks about a specific subscriber ID, their SEP reason, why they were enrolled under SEP, what evidence they submitted, or any details about a named member. The result includes a full 'sep' object with sep_type, supporting_signals, evidence submitted, and confidence — always use this data to answer SEP questions, never say the reason is not stored.
+- Call reprocess_in_review when the user wants to retry, reprocess, or re-run the pipeline on In Review members — either all of them or a specific subscriber. This handles both SEP members who have now submitted evidence and members whose data issues have been fixed.
 - For conversational messages (greetings, questions, explanations) — respond directly, do NOT call any tool.
 
 Member statuses: Pending Business Validation → Ready / Awaiting Clarification → In Batch → Enrolled / Enrolled (SEP) / In Review / Processing Failed
@@ -318,7 +320,13 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_clarifications",
-            "description": "Returns members awaiting clarification with their validation issues.",
+            "description": (
+                "Returns the full list of members in 'Awaiting Clarification' status from MongoDB, "
+                "including their subscriber ID, full name, and the exact validation issues "
+                "(e.g. 'Missing SSN', 'Invalid DOB', 'Incomplete Address'). "
+                "Always call this when the user asks: who needs attention, what are the issues, "
+                "show me members needing clarification, what are the names of members with problems, etc."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -362,6 +370,28 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "reprocess_in_review",
+            "description": (
+                "Re-runs the AI enrollment pipeline on members currently in 'In Review' status. "
+                "Use this when the user wants to retry In Review members after evidence has been submitted "
+                "or data issues have been resolved. Can target a specific subscriber_id or all In Review members. "
+                "Runs as a background job — returns immediately."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "subscriber_id": {
+                        "type": "string",
+                        "description": "Specific subscriber ID to reprocess. Leave empty to reprocess all In Review members.",
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_enrolled_members",
             "description": (
                 "Returns a list of enrolled members (status 'Enrolled' or 'Enrolled (SEP)'). "
@@ -390,8 +420,11 @@ TOOLS = [
             "name": "get_subscriber_details",
             "description": (
                 "Looks up a specific subscriber by their subscriber ID and returns full details: "
-                "current status, last updated date, coverage info, dependents (name, DOB, gender, age), "
-                "and any validation issues. Use when the user asks about a specific member or subscriber ID."
+                "current status, coverage, dependents, validation issues, AND full SEP context — "
+                "sep_type (e.g. 'Household change'), sep_confidence, supporting_signals that triggered SEP, "
+                "evidence submitted, evidence status, and whether they were within OEP. "
+                "Use when the user asks about a specific member, their SEP reason, why they were enrolled under SEP, "
+                "what evidence they submitted, or any details about a named member or subscriber ID."
             ),
             "parameters": {
                 "type": "object",
@@ -624,9 +657,37 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 return json.dumps(full)
 
         elif name == "get_clarifications":
-            from server.routers.clarifications import read_clarifications
-            result = read_clarifications()
-            return json.dumps(result[:20])
+            from db.mongo_connection import get_database
+            db = get_database()
+            if db is None:
+                return json.dumps({"error": "Database not available"})
+
+            members = list(db.members.find(
+                {"status": "Awaiting Clarification"},
+                {"_id": 0, "subscriber_id": 1, "validation_issues": 1,
+                 "latest_update": 1, "history": 1, "lastValidatedAt": 1}
+            ))
+
+            results = []
+            for m in members:
+                latest_date = m.get("latest_update")
+                snapshot = (m.get("history") or {}).get(latest_date, {})
+                info = snapshot.get("member_info") or {}
+                name_str = " ".join(filter(None, [
+                    info.get("first_name"), info.get("last_name")
+                ])) or "Unknown"
+                results.append({
+                    "subscriber_id": m.get("subscriber_id"),
+                    "name": name_str,
+                    "issues": m.get("validation_issues") or [],
+                    "issue_count": len(m.get("validation_issues") or []),
+                    "last_validated": (m.get("lastValidatedAt") or "")[:10],
+                })
+
+            return json.dumps({
+                "total": len(results),
+                "members": results,
+            })
 
         elif name == "get_enrolled_members":
             from db.mongo_connection import get_database
@@ -708,6 +769,53 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 "message": (
                     f"{len(ids)} member(s) re-queued as Ready. "
                     "Create a new batch to include them in the next enrollment run."
+                ),
+            })
+
+        elif name == "reprocess_in_review":
+            from db.mongo_connection import get_database
+
+            db = get_database()
+            if db is None:
+                return json.dumps({"error": "Database not available"})
+
+            subscriber_id = args.get("subscriber_id", "").strip()
+            query = {"status": "In Review"}
+            if subscriber_id:
+                query["subscriber_id"] = subscriber_id
+
+            members_to_reprocess = list(db.members.find(query, {"_id": 0}))
+            if not members_to_reprocess:
+                target = f"subscriber {subscriber_id}" if subscriber_id else "any In Review members"
+                return json.dumps({"error": f"No In Review members found for {target}"})
+
+            # Re-set to a temporary batch-like state and fire background processing
+            ids = [m["subscriber_id"] for m in members_to_reprocess]
+            reprocess_batch_id = f"REVIEW-REPROCESS-{_dt.utcnow().strftime('%Y%m%d%H%M%S')}"
+
+            db.members.update_many(
+                {"subscriber_id": {"$in": ids}},
+                {"$set": {"status": "In Batch", "batch_id": reprocess_batch_id}}
+            )
+            db.batches.insert_one({
+                "id": reprocess_batch_id,
+                "status": "Awaiting Approval",
+                "membersCount": len(ids),
+                "member_ids": ids,
+                "createdAt": _dt.utcnow().isoformat(),
+                "note": "Auto-created for In Review reprocessing",
+            })
+
+            asyncio.create_task(_run_batch_in_background(reprocess_batch_id, members_to_reprocess))
+
+            return json.dumps({
+                "status": "started",
+                "batchId": reprocess_batch_id,
+                "memberCount": len(ids),
+                "subscriber_ids": ids,
+                "message": (
+                    f"{len(ids)} In Review member(s) sent back through the enrollment pipeline. "
+                    f"Use get_batch_result with batchId '{reprocess_batch_id}' to check when done."
                 ),
             })
 
@@ -803,6 +911,29 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                     "coverage_end": cov.get("coverage_end_date") or "—",
                 })
 
+            markers = m.get("markers") or {}
+            agent_analysis = m.get("agent_analysis") or {}
+            branch_analysis = agent_analysis.get("branch_analysis") or {}
+            evidence_check = agent_analysis.get("evidence_check") or {}
+            classification = agent_analysis.get("classification") or {}
+
+            # SEP context
+            sep_info = None
+            if markers.get("is_sep_confirmed"):
+                causality = branch_analysis.get("sep_causality") or {}
+                sep_info = {
+                    "sep_type": markers.get("sep_type") or causality.get("sep_candidate") or "—",
+                    "sep_confidence": markers.get("sep_confidence") or causality.get("confidence"),
+                    "supporting_signals": causality.get("supporting_signals") or [],
+                    "other_candidates": branch_analysis.get("other_candidates") or [],
+                    "is_within_oep": markers.get("is_within_oep"),
+                    "evidence_status": markers.get("evidence_status") or "—",
+                    "required_docs": evidence_check.get("required_docs") or [],
+                    "submitted_docs": evidence_check.get("submitted_docs") or [],
+                    "missing_docs": evidence_check.get("missing_docs") or [],
+                    "evidence_complete": evidence_check.get("evidence_complete"),
+                }
+
             return json.dumps({
                 "subscriber_id": m.get("subscriber_id"),
                 "name": " ".join(filter(None, [info.get("first_name"), info.get("last_name")])) or "Unknown",
@@ -811,13 +942,15 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 "last_validated": (m.get("lastValidatedAt") or "")[:10] or "—",
                 "last_processed": (m.get("lastProcessedAt") or "")[:10] or "—",
                 "batch_id": m.get("batch_id") or "—",
-                "enrollment_path": (m.get("markers") or {}).get("enrollment_path", "—"),
+                "enrollment_path": markers.get("enrollment_path", "—"),
+                "enrollment_type": classification.get("enrollment_type") or "—",
                 "validation_issues": m.get("validation_issues") or [],
                 "coverages": coverage_list,
                 "dependents_count": len(dep_list),
                 "dependents": dep_list,
                 "employer": info.get("employer_name") or "—",
                 "insurer": info.get("insurer_name") or "—",
+                "sep": sep_info,
             })
 
         else:
