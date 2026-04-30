@@ -3,12 +3,7 @@ import { persist } from 'zustand/middleware';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-const INITIAL_STEPS = [
-  { id: '1', title: 'Understanding Query', detail: 'Waiting for input...', status: 'pending' },
-  { id: '2', title: 'Fetching Data', detail: 'Waiting...', status: 'pending' },
-  { id: '3', title: 'Analyzing', detail: 'Waiting...', status: 'pending' },
-  { id: '4', title: 'Generating Response', detail: 'Waiting...', status: 'pending' },
-];
+// INITIAL_STEPS removed — chatProcessSteps is now a dynamic append-only event log
 
 const createNewConversation = () => ({
   id: generateId(),
@@ -32,7 +27,9 @@ const useUIStore = create(
       activeConversationId: null,
       chatInput: '',
       chatIsProcessing: false,
-      chatProcessSteps: INITIAL_STEPS,
+      // Dynamic event log — replaces the old 4-item fixed INITIAL_STEPS array.
+      // Each entry: { id, timestamp, eventType, message }
+      chatProcessSteps: [],
 
       // Derived: get messages for the active conversation
       getChatMessages: () => {
@@ -44,20 +41,31 @@ const useUIStore = create(
       setChatInput: (value) => set({ chatInput: value }),
       setChatIsProcessing: (value) => set({ chatIsProcessing: value }),
 
-      setChatProcessSteps: (updater) =>
+      // Append a new event log entry — grows the log by exactly 1
+      appendEventLogEntry: (entry) =>
         set((state) => ({
-          chatProcessSteps:
-            typeof updater === 'function' ? updater(state.chatProcessSteps) : updater,
+          chatProcessSteps: [...state.chatProcessSteps, entry],
         })),
 
-      updateChatStep: (id, status, detail) =>
+      // Reset the event log and clear processing state
+      resetEventLog: () => set({ chatProcessSteps: [], chatIsProcessing: false, pendingThinkingSteps: [] }),
+
+      // Backward-compat stub — no-op so existing call sites don't throw
+      updateChatStep: () => {},
+
+      // Backward-compat — delegates to resetEventLog
+      resetChatSteps: () => get().resetEventLog(),
+
+      // Pending thinking steps for the current in-flight query.
+      // Accumulated as thinking SSE events arrive, then attached to the response message.
+      pendingThinkingSteps: [],
+
+      appendPendingThinkingStep: (step) =>
         set((state) => ({
-          chatProcessSteps: state.chatProcessSteps.map((step) =>
-            step.id === id ? { ...step, status, detail: detail || step.detail } : step
-          ),
+          pendingThinkingSteps: [...state.pendingThinkingSteps, step],
         })),
 
-      resetChatSteps: () => set({ chatProcessSteps: INITIAL_STEPS }),
+      clearPendingThinkingSteps: () => set({ pendingThinkingSteps: [] }),
 
       // Add a message — preserve timestamp if already set
       addMessage: (message) =>
@@ -103,7 +111,8 @@ const useUIStore = create(
           activeConversationId: newConv.id,
           chatInput: '',
           chatIsProcessing: false,
-          chatProcessSteps: INITIAL_STEPS,
+          chatProcessSteps: [],
+          pendingThinkingSteps: [],
         }));
         return newConv.id;
       },
@@ -114,7 +123,8 @@ const useUIStore = create(
           activeConversationId: id,
           chatInput: '',
           chatIsProcessing: false,
-          chatProcessSteps: INITIAL_STEPS,
+          chatProcessSteps: [],
+          pendingThinkingSteps: [],
         }),
 
       clearChat: () =>
@@ -126,7 +136,8 @@ const useUIStore = create(
           ),
           chatInput: '',
           chatIsProcessing: false,
-          chatProcessSteps: INITIAL_STEPS,
+          chatProcessSteps: [],
+          pendingThinkingSteps: [],
         })),
     }),
     {

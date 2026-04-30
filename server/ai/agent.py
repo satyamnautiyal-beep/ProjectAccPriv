@@ -538,9 +538,39 @@ async def DecisionAgent(query: str, **kwargs) -> str:
         requires_evidence_check = True
         risk["reasons"].append("sep_confirmed_requires_evidence_check")
 
+    # ---- Deterministic plain-English summary ----
+    sep_confirmed = analysis.get("sep_confirmed")
+    sep_type = (analysis.get("sep_causality") or {}).get("sep_candidate")
+
+    def _humanise_block(block: str) -> str:
+        if block == "validation_issues_present":
+            return "validation issues present"
+        if block.startswith("root_status_blocks:"):
+            status_val = block.split(":", 1)[1]
+            return f"status blocked: {status_val}"
+        return block
+
+    if root_status_recommended in ("Enrolled", "Ready") and not hard_blocks:
+        plain_english_summary = "Member enrolled under OEP — all fields valid, no issues found."
+    elif root_status_recommended == "Enrolled (SEP)" and sep_confirmed:
+        plain_english_summary = (
+            f"Member enrolled under SEP — {sep_type} confirmed. "
+            "Required evidence submitted."
+        )
+    elif root_status_recommended == "In Review" and sep_confirmed:
+        plain_english_summary = (
+            f"Placed in review — {sep_type} detected but required evidence is missing."
+        )
+    elif hard_blocks:
+        human_blocks = " and ".join(_humanise_block(b) for b in (hard_blocks or []))
+        plain_english_summary = f"Placed in review — {human_blocks}."
+    else:
+        plain_english_summary = f"Status: {root_status_recommended}."
+
     return json.dumps({
         "root_status_current": root_status_current,
         "root_status_recommended": root_status_recommended,
+        "plain_english_summary": plain_english_summary,
         "agent_analysis_patch": {
             "generated_at": _utc_now_z(),
             "latest_snapshot_date": dates[-1] if dates else None,
@@ -846,7 +876,8 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
         return json.dumps({
             "subscriber_id": subscriber_id,
             "root_status_recommended": root_status_recommended,
-            "markers": markers,                      # ✅ NEW
+            "plain_english_summary": decision.get("plain_english_summary"),  # lifted from DecisionAgent
+            "markers": markers,
             "agent_analysis": agent_analysis
         })
 
@@ -854,6 +885,7 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
         return json.dumps({
             "subscriber_id": None,
             "root_status_recommended": "In Review",
+            "plain_english_summary": None,  # null-safe on error path
             "agent_analysis": {
                 "error": "EnrollmentRouterAgent failed",
                 "exception": type(e).__name__,

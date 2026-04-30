@@ -88,6 +88,7 @@ def process_member_agent(subscriber_id: str):
         {"$set": {
             "agent_analysis": result.get("agent_analysis", result),
             "markers": result.get("markers", {}),
+            "agent_summary": result.get("plain_english_summary"),
             "status": root_status,
             "lastProcessedAt": datetime.utcnow().isoformat(),
         }}
@@ -137,7 +138,7 @@ def summarize_system_status():
 
 class ChatMessage(BaseModel):
     role: str
-    text: str
+    text: str = ""  # optional — UI-only messages (batch cards, member results) may omit text
 
 
 class LLMChatRequest(BaseModel):
@@ -173,5 +174,16 @@ async def assistant_chat_llm(req: LLMChatRequest):
     async def event_stream():
         async for chunk in stream_chat_response(full_history, system_context):
             yield chunk
+            # Yield an empty keep-alive comment to force the chunk through
+            # any intermediate buffers (uvicorn, nginx, Next.js proxy)
+            yield ": \n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",       # disables nginx buffering
+            "Connection": "keep-alive",
+        },
+    )
