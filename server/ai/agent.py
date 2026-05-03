@@ -284,11 +284,9 @@ def _decision_view(record: Dict[str, Any]) -> Dict[str, Any]:
 # -----------------------------------
 # BQ PERSIST (optional — used when persist=True in process_record)
 # -----------------------------------
-def mongo_update(subscriber_id: str, root_status: str, agent_analysis: Dict[str, Any], markers: Optional[Dict[str, Any]] = None) -> None:
+def bq_update(subscriber_id: str, root_status: str, agent_analysis: Dict[str, Any], markers: Optional[Dict[str, Any]] = None) -> None:
     """
     Persists agent results to BigQuery.
-    Function name kept as mongo_update for backwards compatibility with any
-    callers that reference it by name.
     """
     from db.bq_connection import get_database
     db = get_database()
@@ -974,7 +972,7 @@ async def process_record(record: Dict[str, Any], persist: bool = False) -> Dict[
     result = json.loads(final_text)
 
     if persist and result.get("subscriber_id"):
-        mongo_update(
+        bq_update(
             subscriber_id=result["subscriber_id"],
             root_status=result.get("root_status_recommended", "In Review"),
             agent_analysis=result.get("agent_analysis", {}),
@@ -1027,7 +1025,7 @@ async def process_records_batch(
                 parsed = json.loads(final_text)
 
                 if persist and parsed.get("subscriber_id"):
-                    mongo_update(
+                    bq_update(
                         subscriber_id=parsed["subscriber_id"],
                         root_status=parsed.get("root_status_recommended", "In Review"),
                         agent_analysis=parsed.get("agent_analysis", {}),

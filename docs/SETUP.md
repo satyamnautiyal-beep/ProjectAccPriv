@@ -1,6 +1,6 @@
 # HealthEnroll — Setup Guide
 
-Full-stack agentic enrollment platform. Next.js 16 frontend + FastAPI backend + MongoDB + AI Refinery.
+Full-stack agentic enrollment platform. Next.js 16 frontend + FastAPI backend + BigQuery + AI Refinery.
 
 ---
 
@@ -10,7 +10,7 @@ Full-stack agentic enrollment platform. Next.js 16 frontend + FastAPI backend + 
 |------|---------|-------|
 | Python | 3.10+ | 3.10 minimum — async patterns require it |
 | Node.js | 18+ | With npm |
-| MongoDB | 6+ | Local Community Edition or Atlas URI |
+| Google Cloud | — | BigQuery dataset with service account credentials |
 | Git | any | |
 | AI Refinery account | — | Get API key from https://sdk.airefinery.accenture.com |
 
@@ -27,7 +27,7 @@ cp .env.example .env
 Open `.env` and fill in:
 
 - `AI_REFINERY_KEY` — **required**. Your key from the AI Refinery portal.
-- `MONGO_URI` — MongoDB connection string. Default `mongodb://localhost:27017` works for local installs.
+- `GCP_PROJECT_ID` & `BQ_DATASET` & `GOOGLE_APPLICATION_CREDENTIALS` — BigQuery connection settings.
 - `OEP_START_DATE` / `OEP_END_DATE` — set to the current open enrollment window. Controls whether the AI pipeline treats member changes as SEP or OEP.
 
 Everything else has sensible defaults and can be left as-is to start.
@@ -64,21 +64,11 @@ cd ..
 
 ---
 
-## 4. MongoDB
+## 4. BigQuery
 
-Start your local MongoDB service before running the backend. The app auto-creates the `health_enroll` database and `members` / `batches` collections on first use.
+Set up your Google Cloud project with BigQuery enabled. The app expects the dataset to exist (e.g. `health_enroll`) and the `members` / `batches` tables will be created automatically if they don't exist. 
 
-**Local (Windows):**
-```bash
-net start MongoDB
-```
-
-**Local (macOS):**
-```bash
-brew services start mongodb-community
-```
-
-**Atlas:** just set `MONGO_URI` in `.env` to your Atlas connection string — no local install needed.
+Make sure your service account JSON file is securely stored and path is correctly provided in `.env`.
 
 ---
 
@@ -160,7 +150,7 @@ The assistant uses AI Refinery tool-calling to execute real actions. Chat histor
 │       ├── app/             # Page routes
 │       ├── components/      # Shared components + layout
 │       └── store/           # Zustand global state
-├── db/                      # MongoDB utilities
+├── db/                      # BigQuery connection layer
 ├── data/                    # EDI data directory (gitignored)
 ├── test_data/demo/          # Sample EDI files for testing
 ├── parser.py                # EDI 834 parser
@@ -196,8 +186,8 @@ Enrolled   Enrolled (SEP)  In Review
 **`AI_REFINERY_KEY` missing error**
 The backend will refuse to start the chat agent. Set the key in `.env`.
 
-**MongoDB connection refused**
-Make sure MongoDB is running before starting the backend. Check with `mongosh` or MongoDB Compass.
+**BigQuery connection error**
+Make sure your GCP credentials are valid and the `GOOGLE_APPLICATION_CREDENTIALS` path is correct.
 
 **`asyncio.run() cannot be called from a running event loop`**
 Never call `asyncio.run()` inside FastAPI route handlers — use `await` directly. This is already handled in the codebase.

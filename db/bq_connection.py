@@ -501,7 +501,3 @@ def save_member_to_bq(member_data: dict) -> Optional[str]:
     return sub_id
 
 
-# ---------------------------------------------------------------------------
-# Backwards-compatible alias
-# ---------------------------------------------------------------------------
-save_member_to_mongo = save_member_to_bq
