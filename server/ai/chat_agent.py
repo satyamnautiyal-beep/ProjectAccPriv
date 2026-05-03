@@ -160,7 +160,7 @@ async def _run_batch_streaming(
         DecisionAgent, EvidenceCheckAgent,
         _utc_now_z, create_client, PROJECT_NAME, executor_dict,
     )
-    from db.mongo_connection import get_database
+    from db.bq_connection import get_database
     import json as _json
 
     db = get_database()
@@ -264,7 +264,7 @@ async def _run_batch_streaming(
 
                 summary = decision.get("plain_english_summary")
 
-                # Persist to MongoDB
+                # Persist to BigQuery
                 if db is not None:
                     agent_analysis = {
                         "classification": classification,
@@ -292,7 +292,7 @@ async def _run_batch_streaming(
                             "status": root_status,
                             "agent_analysis": agent_analysis,
                             "markers": markers,
-                            "lastProcessedAt": _dt.utcnow().isoformat(),
+                            "lastProcessedAt": _dt.now(_tz.utc),
                         }}
                     )
 
@@ -325,7 +325,7 @@ async def _run_batch_streaming(
                 "status": "Completed",
                 "processedCount": processed,
                 "failedCount": failed,
-                "completedAt": _dt.utcnow().isoformat(),
+                "completedAt": _dt.now(_tz.utc),
             }}
         )
 
@@ -361,7 +361,7 @@ Tool rules:
 - When the user asks to check batch status, call get_batch_result with the batch_id.
 - Only call get_system_status when the user explicitly asks for status, overview, or current state.
 - When calling get_system_status, pass the specific query: 'edi_files', 'pending_validation', 'ready', 'clarifications', 'enrolled', 'in_review', 'failed', 'batches', or 'all'.
-- Call get_clarifications when the user asks about members needing attention, clarification issues, member names with problems, what issues exist, or anything about "Awaiting Clarification" members. This returns real names and exact issues from MongoDB — never use get_system_status for this.
+- Call get_clarifications when the user asks about members needing attention, clarification issues, member names with problems, what issues exist, or anything about "Awaiting Clarification" members. This returns real names and exact issues from BigQuery — never use get_system_status for this.
 - Call get_enrolled_members when the user asks who was enrolled, how many people enrolled today/this week, or wants a list of enrolled members. Pass today's date (YYYY-MM-DD) when they say "today".
 - Call get_subscriber_details when the user asks about a specific subscriber ID, their SEP reason, why they were enrolled under SEP, what evidence they submitted, or any details about a named member. The result includes a full 'sep' object with sep_type, supporting_signals, evidence submitted, and confidence — always use this data to answer SEP questions, never say the reason is not stored.
 - Call reprocess_in_review when the user wants to retry, reprocess, or re-run the pipeline on In Review members — either all of them or a specific subscriber. This handles both SEP members who have now submitted evidence and members whose data issues have been fixed.
@@ -521,7 +521,7 @@ TOOLS = [
         "function": {
             "name": "get_clarifications",
             "description": (
-                "Returns the full list of members in 'Awaiting Clarification' status from MongoDB, "
+                "Returns the full list of members in 'Awaiting Clarification' status from BigQuery, "
                 "including their subscriber ID, full name, and the exact validation issues "
                 "(e.g. 'Missing SSN', 'Invalid DOB', 'Incomplete Address'). "
                 "Always call this when the user asks: who needs attention, what are the issues, "
@@ -1170,7 +1170,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             })
 
         elif name == "analyze_member":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             from server.ai.agent import EnrollmentRouterAgent, build_engine_input
 
             subscriber_id = args.get("subscriber_id", "").strip()
@@ -1219,7 +1219,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                         "status": root_status,
                         "agent_analysis": result.get("agent_analysis", {}),
                         "markers": result.get("markers", {}),
-                        "lastProcessedAt": _dt.utcnow().isoformat(),
+                        "lastProcessedAt": _dt.now(_tz.utc),
                     }}
                 )
                 return json.dumps({
@@ -1365,7 +1365,7 @@ async def stream_chat_response(
                     elif tool_name == "get_subscriber_details":
                         sid = tool_args.get('subscriber_id', '')
                         thinking_msg = f"Tool: get_subscriber_details — loading {sid}"
-                        exec_msg    = f"Reading subscriber record {sid} from MongoDB..."
+                        exec_msg    = f"Reading subscriber record {sid} from BigQuery..."
                     elif tool_name == "get_system_status":
                         query = tool_args.get('query', 'all')
                         thinking_msg = f"Tool: get_system_status — query={query}"
@@ -1381,7 +1381,7 @@ async def stream_chat_response(
                         exec_msg    = "Grouping all Ready members into a new enrollment batch..."
                     elif tool_name == "get_clarifications":
                         thinking_msg = "Tool: get_clarifications — fetching Awaiting Clarification list"
-                        exec_msg    = "Querying MongoDB for members with validation failures..."
+                        exec_msg    = "Querying BigQuery for members with validation failures..."
                     elif tool_name == "get_enrolled_members":
                         date = tool_args.get('date', '')
                         thinking_msg = f"Tool: get_enrolled_members — date={date or 'all'}"
