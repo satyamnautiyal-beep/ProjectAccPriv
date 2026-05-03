@@ -1,9 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
-from db.mongo_connection import get_database
+from db.bq_connection import get_database
 from server.business_logic import validate_member_record
 from server.ai.agent import orchestrate_enrollment
 from server.routers.files import get_statuses
@@ -40,12 +40,12 @@ def parse_members():
         update_doc = {
             "status": new_status,
             "validation_issues": issues,
-            "lastValidatedAt": datetime.utcnow().isoformat(),
+            "lastValidatedAt": datetime.now(timezone.utc),
         }
 
         if latest_update:
             update_doc[f"history.{latest_update}.business_validation"] = {
-                "validated_at": datetime.utcnow().isoformat(),
+                "validated_at": datetime.now(timezone.utc).isoformat(),
                 "result_status": new_status,
                 "issues_count": len(issues),
             }
@@ -90,7 +90,7 @@ def process_member_agent(subscriber_id: str):
             "markers": result.get("markers", {}),
             "agent_summary": result.get("plain_english_summary"),
             "status": root_status,
-            "lastProcessedAt": datetime.utcnow().isoformat(),
+            "lastProcessedAt": datetime.now(timezone.utc),
         }}
     )
 
@@ -155,7 +155,7 @@ async def assistant_chat_llm(req: LLMChatRequest):
     batches = summary.get("batches", [])
 
     system_context = (
-        f"Today's date: {datetime.utcnow().strftime('%Y-%m-%d')}. "
+        f"Today's date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}. "
         f"Ready: {member_counts.get('Ready', 0)}, "
         f"Pending Validation: {member_counts.get('Pending Business Validation', 0)}, "
         f"Awaiting Clarification: {member_counts.get('Awaiting Clarification', 0)}, "

@@ -9,7 +9,7 @@ inside FastAPI's already-running uvicorn event loop.
 import asyncio
 import json
 import os
-from datetime import datetime as _dt
+from datetime import datetime as _dt, timezone as _tz
 from typing import AsyncGenerator, List, Dict, Any
 
 from dotenv import load_dotenv
@@ -26,9 +26,9 @@ _batch_jobs: Dict[str, Dict[str, Any]] = {}
 async def _run_batch_in_background(batch_id: str, members: list) -> None:
     """Runs the AI enrollment pipeline and writes result to _batch_jobs."""
     from server.ai.agent import process_records_batch
-    from db.mongo_connection import get_database
+    from db.bq_connection import get_database
 
-    _batch_jobs[batch_id] = {"status": "running", "startedAt": _dt.utcnow().isoformat()}
+    _batch_jobs[batch_id] = {"status": "running", "startedAt": _dt.now(_tz.utc)}
     db = get_database()
 
     try:
@@ -71,7 +71,7 @@ async def _run_batch_in_background(batch_id: str, members: list) -> None:
                             "markers": markers,
                             "agent_summary": r.get("plain_english_summary"),
                             "status": root_status,
-                            "lastProcessedAt": _dt.utcnow().isoformat(),
+                            "lastProcessedAt": _dt.now(_tz.utc),
                         }}
                     )
                 processed += 1
@@ -84,7 +84,7 @@ async def _run_batch_in_background(batch_id: str, members: list) -> None:
                             {"$set": {
                                 "status": "Processing Failed",
                                 "processing_error": str(member_err),
-                                "lastProcessedAt": _dt.utcnow().isoformat(),
+                                "lastProcessedAt": _dt.now(_tz.utc),
                             }}
                         )
                     except Exception:
@@ -103,7 +103,7 @@ async def _run_batch_in_background(batch_id: str, members: list) -> None:
                     {"$set": {
                         "status": "Processing Failed",
                         "processing_error": "Pipeline did not return a result for this member",
-                        "lastProcessedAt": _dt.utcnow().isoformat(),
+                        "lastProcessedAt": _dt.now(_tz.utc),
                     }}
                 )
                 failed += 1
@@ -115,7 +115,7 @@ async def _run_batch_in_background(batch_id: str, members: list) -> None:
                     "status": "Completed",
                     "processedCount": processed,
                     "failedCount": failed,
-                    "completedAt": _dt.utcnow().isoformat(),
+                    "completedAt": _dt.now(_tz.utc),
                 }}
             )
 
@@ -124,7 +124,7 @@ async def _run_batch_in_background(batch_id: str, members: list) -> None:
             "batchId": batch_id,
             "processed": processed,
             "failed": failed,
-            "completedAt": _dt.utcnow().isoformat(),
+            "completedAt": _dt.now(_tz.utc).isoformat(),
         }
 
     except Exception as e:
@@ -132,7 +132,7 @@ async def _run_batch_in_background(batch_id: str, members: list) -> None:
             "status": "failed",
             "batchId": batch_id,
             "error": str(e),
-            "failedAt": _dt.utcnow().isoformat(),
+            "failedAt": _dt.now(_tz.utc).isoformat(),
         }
         if db is not None:
             db.batches.update_one(
@@ -533,31 +533,6 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_enrolled_members",
-            "description": (
-                "Queries MongoDB for enrolled members. Can filter by date and enrollment path. "
-                "Use this when the user asks who was enrolled, how many enrolled today/yesterday, "
-                "SEP vs OEP breakdowns, or any question about enrolled member details."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "date": {
-                        "type": "string",
-                        "description": "Filter by lastProcessedAt date. Format YYYY-MM-DD. Leave empty for all time.",
-                    },
-                    "enrollment_path": {
-                        "type": "string",
-                        "description": "Filter by 'OEP', 'SEP', or leave empty for both.",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "retry_failed_members",
             "description": (
                 "Re-queues all members with status 'Processing Failed' back to 'Ready' "
@@ -745,7 +720,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
 
         elif name == "create_batch":
             from server.routers.batches import create_batch
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
 
             # Self-check ready count before attempting
             db = get_database()
@@ -771,7 +746,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             return json.dumps(result)
 
         elif name == "process_batch":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
 
             batch_id = args.get("batch_id", "").strip()
             db = get_database()
@@ -817,8 +792,8 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 return json.dumps({"error": "batch_id is required"})
             result = _batch_jobs.get(batch_id)
             if not result:
-                # Also check MongoDB for the batch status as fallback
-                from db.mongo_connection import get_database
+                # Also check BigQuery for the batch status as fallback
+                from db.bq_connection import get_database
                 db = get_database()
                 if db is not None:
                     batch = db.batches.find_one({"id": batch_id}, {"_id": 0})
@@ -829,7 +804,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                             "processedCount": batch.get("processedCount"),
                             "failedCount": batch.get("failedCount"),
                             "completedAt": batch.get("completedAt"),
-                            "source": "mongodb",
+                            "source": "bigquery",
                         })
                 return json.dumps({
                     "status": "unknown",
@@ -925,7 +900,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 return json.dumps(full)
 
         elif name == "get_clarifications":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             db = get_database()
             if db is None:
                 return json.dumps({"error": "Database not available"})
@@ -965,25 +940,21 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             })
 
         elif name == "get_enrolled_members":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             db = get_database()
             if db is None:
                 return json.dumps({"error": "Database not available"})
 
-            query: Dict[str, Any] = {
-                "status": {"$in": ["Enrolled", "Enrolled (SEP)"]}
-            }
+            date_filter      = args.get("date", "").strip()
+            enrollment_path  = args.get("enrollment_path", "").strip().upper()
 
-            date_filter = args.get("date", "").strip()
-            if date_filter:
-                # Match on lastProcessedAt date prefix (YYYY-MM-DD)
-                query["lastProcessedAt"] = {"$regex": f"^{date_filter}"}
-
-            enrollment_path = args.get("enrollment_path", "").strip().upper()
+            # Build status filter — no $regex, BQ wrapper handles $in
             if enrollment_path == "SEP":
-                query["status"] = "Enrolled (SEP)"
+                query: Dict[str, Any] = {"status": "Enrolled (SEP)"}
             elif enrollment_path == "OEP":
-                query["status"] = "Enrolled"
+                query = {"status": "Enrolled"}
+            else:
+                query = {"status": {"$in": ["Enrolled", "Enrolled (SEP)"]}}
 
             members = list(db.members.find(query, {
                 "_id": 0,
@@ -994,6 +965,13 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 "history": 1,
             }))
 
+            # Apply date filter in Python — avoids $regex which BQ doesn't support natively
+            if date_filter:
+                members = [
+                    m for m in members
+                    if (m.get("lastProcessedAt") or "").startswith(date_filter)
+                ]
+
             # Extract name from latest history snapshot
             results = []
             for m in members:
@@ -1001,24 +979,24 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 latest_date = max(history.keys()) if history else None
                 info = history[latest_date].get("member_info", {}) if latest_date else {}
                 first = info.get("first_name", "")
-                last = info.get("last_name", "")
+                last  = info.get("last_name", "")
                 results.append({
-                    "subscriber_id": m["subscriber_id"],
-                    "name": f"{first} {last}".strip() or "Unknown",
-                    "status": m.get("status"),
-                    "enrollment_path": m.get("markers", {}).get("enrollment_path", "OEP"),
+                    "subscriber_id":   m["subscriber_id"],
+                    "name":            f"{first} {last}".strip() or "Unknown",
+                    "status":          m.get("status"),
+                    "enrollment_path": (m.get("markers") or {}).get("enrollment_path", "OEP"),
                     "lastProcessedAt": (m.get("lastProcessedAt") or "")[:10],
                 })
 
             return json.dumps({
-                "total": len(results),
-                "date_filter": date_filter or "all time",
+                "total":                  len(results),
+                "date_filter":            date_filter or "all time",
                 "enrollment_path_filter": enrollment_path or "all",
-                "members": results,
+                "members":                results,
             })
 
         elif name == "retry_failed_members":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             db = get_database()
             if db is None:
                 return json.dumps({"error": "Database not available"})
@@ -1034,9 +1012,10 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             db.members.update_many(
                 {"subscriber_id": {"$in": ids}},
                 {"$set": {
-                    "status": "Ready",
-                    "retried_at": _dt.utcnow().isoformat(),
-                }, "$unset": {"processing_error": ""}}
+                    "status":           "Ready",
+                    "retried_at":       _dt.now(_tz.utc),
+                    "processing_error": None,
+                }}
             )
             return json.dumps({
                 "requeued": len(ids),
@@ -1048,7 +1027,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             })
 
         elif name == "reprocess_in_review":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
 
             db = get_database()
             if db is None:
@@ -1066,7 +1045,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
 
             # Re-set to a temporary batch-like state and fire background processing
             ids = [m["subscriber_id"] for m in members_to_reprocess]
-            reprocess_batch_id = f"REVIEW-REPROCESS-{_dt.utcnow().strftime('%Y%m%d%H%M%S')}"
+            reprocess_batch_id = f"REVIEW-REPROCESS-{_dt.now(_tz.utc).strftime('%Y%m%d%H%M%S')}"
 
             db.members.update_many(
                 {"subscriber_id": {"$in": ids}},
@@ -1077,7 +1056,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 "status": "Awaiting Approval",
                 "membersCount": len(ids),
                 "member_ids": ids,
-                "createdAt": _dt.utcnow().isoformat(),
+                "createdAt": _dt.now(_tz.utc),
                 "note": "Auto-created for In Review reprocessing",
             })
 
@@ -1094,51 +1073,8 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 ),
             })
 
-        elif name == "get_enrolled_members":
-            from db.mongo_connection import get_database
-            db = get_database()
-            if db is None:
-                return json.dumps({"error": "Database not available"})
-
-            date_filter = args.get("date", "").strip()
-            query = {"status": {"$in": ["Enrolled", "Enrolled (SEP)"]}}
-
-            members = list(db.members.find(query, {"_id": 0}))
-
-            # Filter by date if provided (match on lastProcessedAt prefix)
-            if date_filter:
-                members = [
-                    m for m in members
-                    if (m.get("lastProcessedAt") or "").startswith(date_filter)
-                ]
-
-            result = []
-            for m in members:
-                latest_date = m.get("latest_update")
-                snapshot = (m.get("history") or {}).get(latest_date, {})
-                info = snapshot.get("member_info") or {}
-                dependents = snapshot.get("dependents") or []
-                coverages = snapshot.get("coverages") or []
-
-                name_str = " ".join(filter(None, [info.get("first_name"), info.get("last_name")])) or "Unknown"
-                result.append({
-                    "subscriber_id": m.get("subscriber_id"),
-                    "name": name_str,
-                    "status": m.get("status"),
-                    "enrollment_path": (m.get("markers") or {}).get("enrollment_path", "OEP"),
-                    "last_processed": m.get("lastProcessedAt", "")[:10] if m.get("lastProcessedAt") else "—",
-                    "plan_code": (coverages[0].get("plan_code") if coverages else None) or "—",
-                    "dependents_count": len(dependents),
-                })
-
-            return json.dumps({
-                "total": len(result),
-                "date_filter": date_filter or "all",
-                "members": result,
-            })
-
         elif name == "get_subscriber_details":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             from datetime import datetime as _datetime
             db = get_database()
             if db is None:
@@ -1163,7 +1099,8 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                     return None
                 try:
                     dob = _datetime.strptime(dob_str, "%Y-%m-%d")
-                    return int(((_datetime.utcnow() - dob).days) / 365.25)
+                    from datetime import timezone as _tz_inner
+                    return int(((_datetime.now(_tz_inner.utc) - dob.replace(tzinfo=_tz_inner.utc)).days) / 365.25)
                 except Exception:
                     return None
 

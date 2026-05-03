@@ -1,6 +1,6 @@
 # email_agent.py
 from typing import Dict, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 EMAIL_TEMPLATES = {
     "sep_missing_documents": """
@@ -41,4 +41,4 @@ def send_email(to: str, email_payload: Dict[str, str]) -> None:
     print("To:", to)
     print("Subject:", email_payload["subject"])
     print(email_payload["body"])
-    print("Sent at:", datetime.utcnow().isoformat())
+    print("Sent at:", datetime.now(timezone.utc).isoformat())

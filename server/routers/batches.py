@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 import json
 import time
 
-from db.mongo_connection import get_database
+from db.bq_connection import get_database
 from server.ai.agent import process_records_batch
 
 router = APIRouter(prefix="/api")
@@ -31,7 +31,6 @@ def get_batches():
 
 @router.post("/batches")
 def create_batch():
-    """Bundles all Ready members into a new batch awaiting approval."""
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -43,7 +42,8 @@ def create_batch():
     if not ready_members:
         raise HTTPException(status_code=400, detail="No Ready members found")
 
-    batch_id = f"BCH-{datetime.utcnow().strftime('%Y%m%d')}-{int(time.time()) % 1000}"
+    now = datetime.now(timezone.utc)
+    batch_id = f"BCH-{now.strftime('%Y%m%d')}-{int(time.time()) % 1000}"
     member_ids = [m["subscriber_id"] for m in ready_members]
 
     db.batches.insert_one({
@@ -51,7 +51,7 @@ def create_batch():
         "status": "Awaiting Approval",
         "membersCount": len(member_ids),
         "member_ids": member_ids,
-        "createdAt": datetime.utcnow().isoformat(),
+        "createdAt": now,
     })
 
     db.members.update_many(
@@ -75,7 +75,7 @@ def approve_batch(req: ApproveRequest):
     if req.action == "approve":
         db.batches.update_one(
             {"id": req.id},
-            {"$set": {"status": "Approved", "approvedAt": datetime.utcnow().isoformat()}}
+            {"$set": {"status": "Approved", "approvedAt": datetime.now(timezone.utc)}}
         )
         return {"success": True, "batchId": req.id, "status": "Approved"}
     elif req.action == "hold":
@@ -86,10 +86,6 @@ def approve_batch(req: ApproveRequest):
 
 @router.post("/initiate-batch")
 async def initiate_batch(req: BatchRequest):
-    """
-    Legacy non-streaming endpoint — kept for backward compat.
-    The streaming version is GET /batches/stream/{batch_id}.
-    """
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -132,7 +128,7 @@ async def initiate_batch(req: BatchRequest):
                     "markers": result.get("markers", {}),
                     "agent_summary": result.get("plain_english_summary"),
                     "status": root_status,
-                    "lastProcessedAt": datetime.utcnow().isoformat(),
+                    "lastProcessedAt": datetime.now(timezone.utc),   # ✅ FIXED
                 }}
             )
             processed += 1
@@ -144,7 +140,7 @@ async def initiate_batch(req: BatchRequest):
                 {"$set": {
                     "status": "Processing Failed",
                     "processing_error": str(e),
-                    "lastProcessedAt": datetime.utcnow().isoformat(),
+                    "lastProcessedAt": datetime.now(timezone.utc),
                 }}
             )
 
@@ -152,13 +148,14 @@ async def initiate_batch(req: BatchRequest):
         {"status": "In Batch", "batch_id": req.batchId},
         {"_id": 0, "subscriber_id": 1}
     ))
+
     for m in stuck:
         db.members.update_one(
             {"subscriber_id": m["subscriber_id"]},
             {"$set": {
                 "status": "Processing Failed",
                 "processing_error": "Pipeline did not return a result for this member",
-                "lastProcessedAt": datetime.utcnow().isoformat(),
+                "lastProcessedAt": datetime.now(timezone.utc),
             }}
         )
         failed += 1
@@ -169,7 +166,7 @@ async def initiate_batch(req: BatchRequest):
             "status": "Completed",
             "processedCount": processed,
             "failedCount": failed,
-            "completedAt": datetime.utcnow().isoformat(),
+            "completedAt": datetime.now(timezone.utc),
         }}
     )
 
@@ -183,12 +180,7 @@ async def initiate_batch(req: BatchRequest):
 
 @router.post("/batches/stream/{batch_id}")
 async def stream_batch_enrollment(batch_id: str):
-    """
-    Streaming enrollment endpoint for Release Staging.
-    Processes each member individually, emits SSE events in real time,
-    and persists the full enrollment log to MongoDB for later replay.
-    """
-    from server.ai.chat_agent import _run_batch_streaming, _extract_member_name
+    from server.ai.chat_agent import _run_batch_streaming
 
     db = get_database()
     if db is None:
@@ -212,7 +204,6 @@ async def stream_batch_enrollment(batch_id: str):
         return f"data: {json.dumps(payload)}\n\n"
 
     async def event_stream():
-        # Accumulated log for persistence
         log_entries = []
 
         start_event = {
@@ -234,9 +225,11 @@ async def stream_batch_enrollment(batch_id: str):
             event = await queue.get()
             if event is None:
                 break
+
             log_entries.append(event)
             yield send(event)
             yield ": \n\n"
+
             if event.get("type") == "member_result":
                 if event.get("status") == "Processing Failed":
                     failed += 1
@@ -253,12 +246,11 @@ async def stream_batch_enrollment(batch_id: str):
         yield send(done_event)
         yield ": \n\n"
 
-        # Persist the full log to MongoDB so it can be replayed later
-        if db is not None:
-            db.batches.update_one(
-                {"id": batch_id},
-                {"$set": {"enrollmentLog": log_entries}}
-            )
+        # ✅ BigQuery (not Mongo)
+        db.batches.update_one(
+            {"id": batch_id},
+            {"$set": {"enrollmentLog": log_entries}}
+        )
 
     return StreamingResponse(
         event_stream(),
@@ -273,7 +265,6 @@ async def stream_batch_enrollment(batch_id: str):
 
 @router.get("/batches/log/{batch_id}")
 def get_batch_log(batch_id: str):
-    """Returns the persisted enrollment log for a completed batch."""
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection failed")

@@ -33,14 +33,9 @@ PROJECT_NAME = "enrollment_intelligence"
 CONFIG_PATH = (Path(__file__).resolve().parent / "config.yaml").resolve()
 _HASH_CACHE = Path(__file__).resolve().parent / ".enrollment_intelligence_project_version"
 
-# Evidence config (NEW)
+# Evidence config
 SEP_REQUIRED_DOCS_PATH = (Path(__file__).resolve().parent / "sep_required_docs.json").resolve()
 MOCK_SUBMITTED_DOCS_PATH = (Path(__file__).resolve().parent / "mock_submitted_docs.json").resolve()
-
-# Mongo (optional - used only if persist=True in process_record/process_records_batch)
-MONGO_URI = os.getenv("MONGO_URI", "")
-MONGO_DB = os.getenv("MONGO_DB_NAME", "health_enroll")
-MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "members")
 
 DEFAULT_ENROLLMENT_SOURCE = os.getenv("DEFAULT_ENROLLMENT_SOURCE", "Employer")
 
@@ -287,17 +282,26 @@ def _decision_view(record: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # -----------------------------------
-# MONGO PERSIST (optional)
+# BQ PERSIST (optional — used when persist=True in process_record)
 # -----------------------------------
 def mongo_update(subscriber_id: str, root_status: str, agent_analysis: Dict[str, Any], markers: Optional[Dict[str, Any]] = None) -> None:
-    if not MONGO_URI:
+    """
+    Persists agent results to BigQuery.
+    Function name kept as mongo_update for backwards compatibility with any
+    callers that reference it by name.
+    """
+    from db.bq_connection import get_database
+    db = get_database()
+    if db is None:
         return
-    from pymongo import MongoClient
-    client = MongoClient(MONGO_URI)
-    col = client[MONGO_DB][MONGO_COLLECTION]
-    col.update_one(
+    db.members.update_one(
         {"subscriber_id": subscriber_id},
-        {"$set": {"status": root_status, "agent_analysis": agent_analysis, "markers": markers or {}, "updated_at": _utc_now_z()}},
+        {"$set": {
+            "status":         root_status,
+            "agent_analysis": agent_analysis,
+            "markers":        markers or {},
+            "updated_at":     _utc_now_z(),
+        }},
         upsert=False,
     )
 
