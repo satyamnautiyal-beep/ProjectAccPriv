@@ -141,8 +141,13 @@ function DependentsPanel({ member, onClose }) {
 // ---------------------------------------------------------------------------
 function StatusCell({ member }) {
   const [hovered, setHovered] = useState(false);
-  const issues = member.validation_issues || [];
+  const rawIssues = member.validation_issues || [];
   const status = member.status || '';
+
+  // Normalise issues — can be strings or {message, severity} objects
+  const issues = rawIssues.map(i =>
+    typeof i === 'string' ? i : (i?.message || JSON.stringify(i))
+  );
 
   const isReady = status === 'Ready';
   const hasClarification = issues.length > 0 || status === 'Awaiting Clarification';
@@ -328,7 +333,7 @@ export default function IntegrityWorkbenchPage() {
               {isLoading && <tr><td colSpan="5" style={{ textAlign: 'center', padding: '48px' }}>Loading records...</td></tr>}
               {!isLoading && filteredMembers.length === 0 && <tr><td colSpan="5" style={{ textAlign: 'center', padding: '48px' }}>No records found matching this filter.</td></tr>}
 
-              {filteredMembers.map((member) => {
+              {filteredMembers.map((member, rowIdx) => {
                 const latestDate = member.latest_update;
                 const snapshot = member.history ? member.history[latestDate] : null;
                 const info = snapshot?.member_info || {};
@@ -340,7 +345,7 @@ export default function IntegrityWorkbenchPage() {
                 const coverageStart = fmtDate(snapshot?.coverages?.[0]?.coverage_start_date);
 
                 return (
-                  <tr key={member.subscriber_id} style={{ height: '72px' }}>
+                  <tr key={`${member.subscriber_id}-${rowIdx}`} style={{ height: '72px' }}>
                     {/* Subscriber & Family */}
                     <td style={{ paddingLeft: '24px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>

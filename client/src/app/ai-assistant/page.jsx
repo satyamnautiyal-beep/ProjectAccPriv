@@ -75,48 +75,54 @@ function ThinkingBlock({ steps }) {
   );
 }
 
-// Batch summary card — replaces individual member cards in chat for large batches
-function BatchSummaryCard({ msg, onExpand }) {
+// Batch milestone card — shown in chat when the agent completes a batch run
+function BatchSummaryCard({ msg }) {
+  const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const members = msg.batchMembers || [];
-  const showToggle = members.length > 0;
+  const enrolled = members.filter(m => m.status === 'Enrolled' || m.status === 'Enrolled (SEP)').length;
+  const inReview = members.filter(m => m.status === 'In Review').length;
+  const failed = members.filter(m => m.status === 'Processing Failed').length;
+
   return (
-    <div className={styles.batchSummaryCard}>
-      <div className={styles.batchSummaryHeader}>
-        <span className={styles.batchSummaryTitle}>Batch complete</span>
-        <span className={styles.batchSummaryMeta}>{msg.batchId}</span>
-      </div>
-      <div className={styles.batchSummaryStats}>
-        <span className={`${styles.batchStat} ${styles.batchStatGreen}`}>
-          ✓ {msg.processed} enrolled
-        </span>
-        {msg.failed > 0 && (
-          <span className={`${styles.batchStat} ${styles.batchStatRed}`}>
-            ✗ {msg.failed} failed
-          </span>
-        )}
-      </div>
-      {showToggle && (
-        <button
-          className={styles.batchExpandToggle}
-          onClick={() => setExpanded((e) => !e)}
-        >
-          {expanded ? 'Hide' : 'Show'} member details ({members.length})
-        </button>
-      )}
-      {expanded && (
-        <div className={styles.batchMemberList}>
-          {members.map((m, i) => (
-            <div key={i} className={styles.batchMemberRow}>
-              <span className={styles.batchMemberName}>{m.name}</span>
-              <span className={styles.batchMemberSubId}>{m.subscriber_id}</span>
-              <span className={`${styles.statusBadge} ${styles[statusBadgeClass(m.status)]}`}>
-                {m.status}
-              </span>
-            </div>
-          ))}
+    <div className={styles.batchMilestoneCard}>
+      <div className={styles.batchMilestoneIcon}>✓</div>
+      <div className={styles.batchMilestoneBody}>
+        <div className={styles.batchMilestoneTitle}>Enrollment Complete</div>
+        <div className={styles.batchMilestoneMeta}>{msg.batchId}</div>
+        <div className={styles.batchMilestoneStats}>
+          <span className={styles.batchMilestoneStatGreen}>{enrolled} enrolled</span>
+          {inReview > 0 && <span className={styles.batchMilestoneStatAmber}>{inReview} in review</span>}
+          {failed > 0 && <span className={styles.batchMilestoneStatRed}>{failed} failed</span>}
         </div>
-      )}
+        {members.length > 0 && (
+          <button
+            className={styles.batchMilestoneToggle}
+            onClick={() => setExpanded(e => !e)}
+          >
+            {expanded ? 'Hide' : 'Show'} member breakdown ({members.length})
+          </button>
+        )}
+        {expanded && (
+          <div className={styles.batchMemberList}>
+            {members.map((m, i) => (
+              <div key={i} className={styles.batchMemberRow}>
+                <span className={styles.batchMemberName}>{m.name}</span>
+                <span className={styles.batchMemberSubId}>{m.subscriber_id}</span>
+                <span className={`${styles.statusBadge} ${styles[statusBadgeClass(m.status)]}`}>
+                  {m.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          className={styles.batchMilestoneViewLog}
+          onClick={() => router.push('/release-staging')}
+        >
+          View in Release Staging →
+        </button>
+      </div>
       <div className={styles.timestamp}>{formatTime(msg.timestamp)}</div>
     </div>
   );
@@ -144,6 +150,7 @@ export default function AIAssistantPage() {
     clearPendingThinkingSteps,
     startNewConversation,
     switchConversation,
+    saveCompletedRun,
   } = useUIStore();
 
   const [mounted, setMounted] = React.useState(false);
@@ -156,6 +163,10 @@ export default function AIAssistantPage() {
   // Accumulate batch members during a streaming batch run
   const batchMembersRef = useRef([]);
   const batchInfoRef = useRef(null);
+  // Accumulate release-staging-compatible events for the run log
+  const batchEventsRef = useRef([]);
+  // Pipeline progress node ID — we update this single node in place
+  const pipelineProgressIdRef = useRef(null);
 
   const chatMessages = getChatMessages();
   const hasMessages = chatMessages.length > 0;
@@ -197,6 +208,8 @@ export default function AIAssistantPage() {
     clearPendingThinkingSteps();
     batchMembersRef.current = [];
     batchInfoRef.current = null;
+    batchEventsRef.current = [];
+    pipelineProgressIdRef.current = null;
     setChatIsProcessing(true);
 
     const history = chatMessages
@@ -249,15 +262,97 @@ export default function AIAssistantPage() {
 
           switch (payload.type) {
             case 'thinking': {
+              // Pipeline-scoped thinking events: silenced from the summary panel,
+              // but accumulated into batchEventsRef for the release-staging run log.
+              if (payload.scope === 'pipeline') {
+                const msg = payload.message || '';
+                // The "-- Starting pipeline for X" line becomes the header event
+                if (msg.startsWith('--')) {
+                  batchEventsRef.current.push({
+                    id: generateId(),
+                    type: 'header',
+                    message: msg,
+                    ts: new Date().toISOString(),
+                  });
+                } else {
+                  // All other pipeline thinking lines become stage events
+                  batchEventsRef.current.push({
+                    id: generateId(),
+                    type: 'stage',
+                    message: msg.trim(),
+                    ts: new Date().toISOString(),
+                  });
+                }
+                break;
+              }
               const step = {
                 id: generateId(),
                 timestamp: new Date().toISOString(),
                 message: payload.message,
               };
-              // Append to live right-panel log
               appendEventLogEntry({ ...step, eventType: 'thinking' });
-              // Also accumulate for attaching to the upcoming response message
               appendPendingThinkingStep(step);
+              break;
+            }
+
+            case 'agent_call':
+              // Pipeline-scoped agent calls: silenced from summary panel,
+              // accumulated as stage events in the run log so they appear in the expandable steps.
+              if (payload.scope === 'pipeline') {
+                batchEventsRef.current.push({
+                  id: generateId(),
+                  type: 'stage',
+                  message: `▶ ${payload.agent}`,
+                  ts: new Date().toISOString(),
+                });
+                break;
+              }
+              appendEventLogEntry({
+                id: generateId(),
+                timestamp: new Date().toISOString(),
+                eventType: 'agent_call',
+                agent: payload.agent,
+                message: payload.message,
+              });
+              break;
+
+            case 'pipeline_progress': {
+              // Upsert a single live progress node — create on first event, update in place after
+              const progressId = pipelineProgressIdRef.current || generateId();
+              if (!pipelineProgressIdRef.current) {
+                pipelineProgressIdRef.current = progressId;
+                appendEventLogEntry({
+                  id: progressId,
+                  timestamp: new Date().toISOString(),
+                  eventType: 'pipeline_progress',
+                  done: payload.done,
+                  total: payload.total,
+                  enrolled: payload.enrolled,
+                  inReview: payload.inReview,
+                  failed: payload.failed,
+                  currentMember: payload.currentMember,
+                  currentStatus: payload.currentStatus,
+                });
+              } else {
+                // Update the existing node in place via store
+                useUIStore.setState((state) => ({
+                  chatProcessSteps: state.chatProcessSteps.map((s) =>
+                    s.id === progressId
+                      ? {
+                          ...s,
+                          done: payload.done,
+                          total: payload.total,
+                          enrolled: payload.enrolled,
+                          inReview: payload.inReview,
+                          failed: payload.failed,
+                          currentMember: payload.currentMember,
+                          currentStatus: payload.currentStatus,
+                          timestamp: new Date().toISOString(),
+                        }
+                      : s
+                  ),
+                }));
+              }
               break;
             }
 
@@ -268,9 +363,20 @@ export default function AIAssistantPage() {
                 eventType: 'tool',
                 message: payload.message,
               });
-              // If this is a batch completion status, capture the info
+              // If this is a batch completion status, capture the info and save run log
               if (payload.details?.batchId) {
                 batchInfoRef.current = payload.details;
+                // Save to store so release-staging "View run log" works after navigation
+                if (batchEventsRef.current.length > 0) {
+                  saveCompletedRun({
+                    batchId: payload.details.batchId,
+                    events: [...batchEventsRef.current],
+                    processed: payload.details.processed ?? 0,
+                    failed: payload.details.failed ?? 0,
+                    memberCount: (payload.details.processed ?? 0) + (payload.details.failed ?? 0),
+                    phase: 'done',
+                  });
+                }
               }
               // Don't add status_update as a chat message — it's noise
               break;
@@ -283,12 +389,18 @@ export default function AIAssistantPage() {
                 status: payload.status,
                 summary: payload.summary,
               });
-              appendEventLogEntry({
+              // Push the result event — header + stage events were already pushed
+              // as the pipeline-scoped thinking events arrived, so order is correct.
+              batchEventsRef.current.push({
                 id: generateId(),
-                timestamp: new Date().toISOString(),
-                eventType: 'member_result',
-                message: `${payload.name}: ${payload.status}`,
+                type: 'result',
+                status: payload.status,
+                message: `${payload.name} (${payload.subscriber_id}) -> ${payload.status}`,
+                summary: payload.summary,
+                ts: new Date().toISOString(),
               });
+              // member_result is NOT added to chatProcessSteps — the pipeline_progress
+              // node handles the live summary in the right panel
               break;
 
             case 'response': {
@@ -517,22 +629,8 @@ export default function AIAssistantPage() {
                   <div className={styles.thinkingCard}>
                     <div className={styles.thinkingCardHeader}>
                       <span className={styles.thinkingSpinner} />
-                      <span className={styles.thinkingCardTitle}>
-                        {pendingThinkingSteps.length > 0
-                          ? pendingThinkingSteps[pendingThinkingSteps.length - 1].message
-                          : 'Thinking...'}
-                      </span>
+                      <span className={styles.thinkingCardTitle}>Processing…</span>
                     </div>
-                    {pendingThinkingSteps.length > 1 && (
-                      <div className={styles.thinkingCardSteps}>
-                        {pendingThinkingSteps.slice(0, -1).map((s, i) => (
-                          <div key={i} className={styles.thinkingCardStep}>
-                            <span className={styles.thinkingCardStepCheck}>✓</span>
-                            <span className={styles.thinkingCardStepText}>{s.message}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
@@ -577,35 +675,95 @@ export default function AIAssistantPage() {
             </div>
           ) : (
             <div className={styles.timeline}>
-              {chatProcessSteps.map((entry, idx) => {
-                const isLast = idx === chatProcessSteps.length - 1;
-                const isTool = entry.eventType === 'tool';
-                const isResult = entry.eventType === 'result';
-                const isMemberResult = entry.eventType === 'member_result';
-                // Show timestamp only when second changes from previous entry
-                const prevEntry = chatProcessSteps[idx - 1];
-                const prevSec = prevEntry ? new Date(prevEntry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : null;
-                const thisSec = new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-                const showTime = thisSec !== prevSec;
+              {(() => {
+                // pipeline_progress is updated in-place; everything else renders as-is.
+                // member_result events are no longer added to chatProcessSteps —
+                // the pipeline_progress node handles the live summary.
+                const nodes = chatProcessSteps;
 
-                return (
-                  <div key={entry.id} className={`${styles.timelineItem} ${isTool ? styles.timelineItemTool : ''} ${isResult ? styles.timelineItemResult : ''} ${isMemberResult ? styles.timelineItemMember : ''}`}>
-                    {/* Connector line */}
-                    {!isLast && <div className={`${styles.timelineLine} ${isTool ? styles.timelineLineGreen : ''}`} />}
-                    {/* Dot */}
-                    <div className={`${styles.timelineDot} ${isTool ? styles.timelineDotGreen : ''} ${isResult ? styles.timelineDotPurple : ''} ${isMemberResult ? styles.timelineDotAmber : ''} ${isLast && chatIsProcessing ? styles.timelineDotPulse : ''}`} />
-                    {/* Content */}
-                    <div className={styles.timelineContent}>
-                      {showTime && (
-                        <span className={styles.timelineTime}>{thisSec}</span>
-                      )}
-                      <span className={`${styles.timelineMessage} ${isTool ? styles.timelineMessageTool : ''} ${isResult ? styles.timelineMessageResult : ''}`}>
-                        {entry.message}
-                      </span>
+                return nodes.map((node, idx) => {
+                  const isLast = idx === nodes.length - 1;
+
+                  if (node.eventType === 'pipeline_progress') {
+                    const isDone = node.done === node.total && node.total > 0;
+                    const pct = node.total > 0 ? Math.round((node.done / node.total) * 100) : 0;
+                    const ts = new Date(node.timestamp).toLocaleTimeString([], {
+                      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+                    });
+                    return (
+                      <div key={node.id} className={`${styles.timelineItem} ${isDone ? styles.timelineItemResult : ''}`}>
+                        {!isLast && <div className={styles.timelineLine} />}
+                        <div className={`${styles.timelineDot} ${isDone ? styles.timelineDotGreen : styles.timelineDotPulse}`} />
+                        <div className={styles.timelineContent}>
+                          <span className={styles.timelineTime}>{ts}</span>
+                          {isDone ? (
+                            <span className={`${styles.timelineMessage} ${styles.timelineMessageResult}`}>
+                              ✓ Pipeline complete — {node.enrolled} enrolled
+                              {node.inReview > 0 && `, ${node.inReview} in review`}
+                              {node.failed > 0 && `, ${node.failed} failed`}
+                            </span>
+                          ) : (
+                            <div className={styles.pipelineProgressNode}>
+                              <div className={styles.pipelineProgressHeader}>
+                                <span className={styles.pipelineProgressLabel}>
+                                  Running pipeline — {node.done} / {node.total}
+                                </span>
+                                <span className={styles.pipelineProgressPct}>{pct}%</span>
+                              </div>
+                              <div className={styles.pipelineProgressTrack}>
+                                <div className={styles.pipelineProgressFill} style={{ width: `${pct}%` }} />
+                              </div>
+                              {node.currentMember && (
+                                <span className={styles.pipelineProgressCurrent}>
+                                  {node.currentMember} → {node.currentStatus}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  const isTool = node.eventType === 'tool';
+                  const isResult = node.eventType === 'result';
+                  const isAgentCall = node.eventType === 'agent_call';
+                  const prevNode = nodes[idx - 1];
+                  const prevSec = prevNode && prevNode.timestamp
+                    ? new Date(prevNode.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+                    : null;
+                  const thisSec = node.timestamp
+                    ? new Date(node.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+                    : null;
+                  const showTime = thisSec && thisSec !== prevSec;
+
+                  if (isAgentCall) {
+                    return (
+                      <div key={node.id} className={styles.timelineItem}>
+                        {!isLast && <div className={styles.timelineLine} />}
+                        <div className={`${styles.timelineDot} ${styles.timelineDotAgent} ${isLast && chatIsProcessing ? styles.timelineDotPulse : ''}`} />
+                        <div className={styles.timelineContent}>
+                          {showTime && <span className={styles.timelineTime}>{thisSec}</span>}
+                          <span className={styles.agentCallChip}>{node.agent}</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={node.id} className={`${styles.timelineItem} ${isTool ? styles.timelineItemTool : ''} ${isResult ? styles.timelineItemResult : ''}`}>
+                      {!isLast && <div className={`${styles.timelineLine} ${isTool ? styles.timelineLineGreen : ''}`} />}
+                      <div className={`${styles.timelineDot} ${isTool ? styles.timelineDotGreen : ''} ${isResult ? styles.timelineDotPurple : ''} ${isLast && chatIsProcessing ? styles.timelineDotPulse : ''}`} />
+                      <div className={styles.timelineContent}>
+                        {showTime && <span className={styles.timelineTime}>{thisSec}</span>}
+                        <span className={`${styles.timelineMessage} ${isTool ? styles.timelineMessageTool : ''} ${isResult ? styles.timelineMessageResult : ''}`}>
+                          {node.message}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
               {chatIsProcessing && (
                 <div className={styles.timelineItem}>
                   <div className={`${styles.timelineDot} ${styles.timelineDotPulse}`} />
@@ -626,4 +784,3 @@ export default function AIAssistantPage() {
     </div>
   );
 }
-

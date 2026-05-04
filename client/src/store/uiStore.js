@@ -103,6 +103,17 @@ const useUIStore = create(
           }),
         })),
 
+      // --- Completed batch run logs ---
+      // Keyed by batchId. Each entry: { batchId, events, processed, failed, phase, memberCount }
+      // Persisted so "View run log" survives navigation and page refresh.
+      completedRuns: {},
+
+      // Save or update a completed run's state
+      saveCompletedRun: (state) =>
+        set((prev) => ({
+          completedRuns: { ...prev.completedRuns, [state.batchId]: state },
+        })),
+
       // Start a brand-new conversation and make it active
       startNewConversation: () => {
         const newConv = createNewConversation();
@@ -148,6 +159,7 @@ const useUIStore = create(
         activeConversationId: state.activeConversationId,
         showAnnotations: state.showAnnotations,
         sidebarOpen: state.sidebarOpen,
+        completedRuns: state.completedRuns,
       }),
     }
   )
