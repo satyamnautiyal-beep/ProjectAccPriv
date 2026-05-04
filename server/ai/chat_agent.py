@@ -148,10 +148,8 @@ async def _run_batch_streaming(
 ) -> None:
     """
     Streaming variant of the batch runner.
-    Calls each enrollment pipeline stage individually and emits a thinking event
-    for every stage so the frontend shows the full agentic reasoning flow.
-    Puts None sentinel when all members are done.
-    Does NOT modify _run_batch_in_background — that function is used by reprocess_in_review.
+    Emits natural-language thinking events with deliberate pacing so the
+    frontend renders each step gracefully rather than all at once.
     """
     from server.ai.agent import (
         build_engine_input,
@@ -163,15 +161,20 @@ async def _run_batch_streaming(
     from db.mongo_connection import get_database
     import json as _json
 
+    async def emit(payload: dict, delay: float = 0.0) -> None:
+        """Put an event on the queue and yield control so uvicorn can flush it."""
+        await queue.put(payload)
+        await asyncio.sleep(delay if delay > 0 else 0)
+
     db = get_database()
     processed = 0
     failed = 0
+    in_review = 0
 
-    # Open one Distiller session for the whole batch
     try:
         client = create_client()
     except Exception as e:
-        await queue.put({"type": "thinking", "message": f"⚠ Could not connect to AI Refinery: {e}"})
+        await emit({"type": "thinking", "message": f"Could not connect to AI Refinery: {e}"})
         await queue.put(None)
         return
 
@@ -180,78 +183,115 @@ async def _run_batch_streaming(
         uuid="enrollment_batch_stream",
         executor_dict=executor_dict,
     ) as dc:
+        total_members = len(members)
+        await emit({"type": "pipeline_progress", "done": 0, "total": total_members, "enrolled": 0, "inReview": 0, "failed": 0})
+
         for member in members:
             sid = member.get("subscriber_id", "")
             member_name = _extract_member_name(member)
 
-            await queue.put({"type": "thinking", "message": f"-- Starting pipeline for {member_name} ({sid})"})
+            await emit({"type": "thinking", "scope": "pipeline", "message": f"-- Starting pipeline for {member_name} ({sid})"}, delay=0.05)
 
             try:
                 full_record = build_engine_input(member)
 
-                # ── Stage 1: Classification ──────────────────────────────────
+                # Stage 1: Classification
+                await emit({"type": "thinking", "scope": "pipeline", "message": "  Reading enrollment history and checking for life-event signals..."}, delay=0.08)
                 classification_record = _classification_view(full_record)
+                await emit({"type": "agent_call", "scope": "pipeline", "agent": "Enrollment Classifier", "message": "Classifier Agent — detecting SEP signals and enrollment type"}, delay=0.0)
                 classification = _json.loads(await EnrollmentClassifierAgent(_json.dumps(classification_record)))
                 sep_candidate = classification.get("sep_candidate", False)
                 enroll_type = classification.get("enrollment_type", "Unknown")
                 within_oep = classification.get("is_within_oep")
-                oep_label = "within OEP" if within_oep else ("outside OEP" if within_oep is False else "OEP unknown")
-                await queue.put({"type": "thinking", "message": f"  Classifier: {enroll_type}, SEP candidate: {sep_candidate}, {oep_label}"})
 
-                # ── Stage 2: Branch analysis ─────────────────────────────────
                 if sep_candidate:
+                    await emit({"type": "thinking", "scope": "pipeline", "message": "  Detected changes in the member record that may indicate a qualifying life event."}, delay=0.1)
+                else:
+                    oep_note = "Member is enrolling during the open enrollment window." if within_oep else "Enrollment is outside the standard OEP window."
+                    await emit({"type": "thinking", "scope": "pipeline", "message": f"  No life-event signals found. {oep_note} Routing to standard OEP path."}, delay=0.1)
+
+                # Stage 2: Branch analysis
+                if sep_candidate:
+                    await emit({"type": "thinking", "scope": "pipeline", "message": "  Analysing what changed between snapshots to identify the SEP trigger..."}, delay=0.08)
                     sep_record = _sep_inference_view(full_record)
+                    await emit({"type": "agent_call", "scope": "pipeline", "agent": "SEP Inference Agent", "message": "SEP Inference Agent — identifying qualifying life event"}, delay=0.0)
                     branch_analysis = _json.loads(await SepInferenceAgent(_json.dumps({"record": sep_record, "classification": classification})))
                     sep_confirmed = branch_analysis.get("sep_confirmed", False)
                     causality = branch_analysis.get("sep_causality") or {}
                     sep_type_label = causality.get("sep_candidate", "unknown")
                     confidence = causality.get("confidence", 0)
                     conf_pct = int(confidence * 100) if isinstance(confidence, float) else confidence
-                    await queue.put({"type": "thinking", "message": f"  SEP Inference: {'confirmed' if sep_confirmed else 'not confirmed'} — {sep_type_label} ({conf_pct}% confidence)"})
+                    signals = causality.get("supporting_signals") or []
+                    signal_note = f" Supporting signals: {', '.join(signals[:2])}." if signals else ""
+                    if sep_confirmed:
+                        await emit({"type": "thinking", "scope": "pipeline", "message": f"  SEP confirmed: {sep_type_label} ({conf_pct}% confidence).{signal_note}"}, delay=0.1)
+                    else:
+                        await emit({"type": "thinking", "scope": "pipeline", "message": f"  SEP signals present but not strong enough to confirm. Treating as standard enrollment."}, delay=0.1)
                 else:
+                    await emit({"type": "thinking", "scope": "pipeline", "message": "  Building enrollment timeline from member history snapshots..."}, delay=0.08)
                     normal_record = _normal_flow_view(full_record)
+                    await emit({"type": "agent_call", "scope": "pipeline", "agent": "Normal Enrollment Agent", "message": "Normal Enrollment Agent — building OEP timeline"}, delay=0.0)
                     branch_analysis = _json.loads(await NormalEnrollmentAgent(_json.dumps({"record": normal_record, "classification": classification})))
                     sep_confirmed = False
                     snapshots = (branch_analysis.get("timeline") or {}).get("observations", {}).get("snapshot_count", 1)
-                    await queue.put({"type": "thinking", "message": f"  Normal flow: OEP path, {snapshots} snapshot(s) analysed"})
+                    eff_dates = (branch_analysis.get("timeline") or {}).get("observations", {}).get("distinct_effective_dates") or []
+                    date_note = f" Coverage effective {eff_dates[0]}." if eff_dates else ""
+                    await emit({"type": "thinking", "scope": "pipeline", "message": f"  Timeline built from {snapshots} snapshot(s).{date_note} Clean OEP enrollment path."}, delay=0.1)
 
-                # ── Stage 3: Authority ───────────────────────────────────────
+                # Stage 3: Authority
                 source = full_record.get("source_system", "Employer")
                 payer_discretion = source not in {"Exchange", "CMS", "FFE", "SBE"}
                 authority = {"authority_analysis": {"source": source, "payer_discretion": payer_discretion}}
-                await queue.put({"type": "thinking", "message": f"  Authority: source={source}, payer discretion={payer_discretion}"})
+                if payer_discretion:
+                    await emit({"type": "thinking", "scope": "pipeline", "message": f"  Enrollment source is {source}. Employer-sponsored plan — payer has discretion over eligibility."}, delay=0.08)
+                else:
+                    await emit({"type": "thinking", "scope": "pipeline", "message": f"  Enrollment source is {source} (Exchange/CMS). Regulatory rules apply — no payer discretion."}, delay=0.08)
 
-                # ── Stage 4: Decision ────────────────────────────────────────
+                # Stage 4: Decision
+                await emit({"type": "thinking", "scope": "pipeline", "message": "  Evaluating eligibility: checking validation issues, blocking conditions, and final status..."}, delay=0.08)
                 decision_record = _decision_view(full_record)
+                await emit({"type": "agent_call", "scope": "pipeline", "agent": "Decision Agent", "message": "Decision Agent — evaluating eligibility and final status"}, delay=0.0)
                 decision = _json.loads(await DecisionAgent(_json.dumps({"record": decision_record, "classification": classification, "analysis": branch_analysis})))
                 hard_blocks = (decision.get("agent_analysis_patch") or {}).get("hard_blocks", [])
                 requires_evidence = (decision.get("agent_analysis_patch") or {}).get("requires_evidence_check", False)
                 interim_status = decision.get("root_status_recommended", "In Review")
-                blocks_label = f" — blocks: {', '.join(hard_blocks)}" if hard_blocks else " — no hard blocks"
-                await queue.put({"type": "thinking", "message": f"  Decision: interim={interim_status}{blocks_label}"})
 
-                # ── Stage 5: Evidence check (SEP only) ──────────────────────
+                if hard_blocks:
+                    block_desc = "; ".join(hard_blocks)
+                    await emit({"type": "thinking", "scope": "pipeline", "message": f"  Hard block detected: {block_desc}. Member cannot be auto-enrolled — flagging for manual review."}, delay=0.1)
+                elif sep_confirmed and requires_evidence:
+                    await emit({"type": "thinking", "scope": "pipeline", "message": "  SEP confirmed. Need to verify that the required supporting documents have been submitted."}, delay=0.1)
+                else:
+                    await emit({"type": "thinking", "scope": "pipeline", "message": "  No blocking conditions found. Member meets all eligibility criteria."}, delay=0.1)
+
+                # Stage 5: Evidence check (SEP only)
                 evidence_check = None
                 root_status = interim_status
 
                 if sep_confirmed and requires_evidence:
                     sep_type = (branch_analysis.get("sep_causality") or {}).get("sep_candidate")
+                    await emit({"type": "thinking", "scope": "pipeline", "message": f"  Checking submitted documents against requirements for: {sep_type}..."}, delay=0.08)
+                    await emit({"type": "agent_call", "scope": "pipeline", "agent": "Evidence Check Agent", "message": "Evidence Check Agent — verifying submitted documents"}, delay=0.0)
                     evidence_check = _json.loads(await EvidenceCheckAgent(_json.dumps({"subscriber_id": sid, "sep_type": sep_type})))
                     evidence_complete = evidence_check.get("evidence_complete", False)
                     missing = evidence_check.get("missing_docs", [])
+                    submitted = evidence_check.get("submitted_docs", [])
                     if hard_blocks:
                         root_status = "In Review"
+                        await emit({"type": "thinking", "scope": "pipeline", "message": "  Evidence check complete but hard blocks remain. Placing in review."}, delay=0.1)
                     elif evidence_complete:
                         root_status = "Enrolled (SEP)"
+                        await emit({"type": "thinking", "scope": "pipeline", "message": f"  All required documents verified ({', '.join(submitted[:2])}). SEP enrollment approved."}, delay=0.1)
                     else:
                         root_status = "In Review"
-                    await queue.put({"type": "thinking", "message": f"  Evidence: {'complete' if evidence_complete else f'incomplete — {len(missing)} doc(s) missing'} → {root_status}"})
+                        missing_str = ', '.join(missing[:2])
+                        await emit({"type": "thinking", "scope": "pipeline", "message": f"  Missing documents: {missing_str}. Cannot complete SEP enrollment — placing in review."}, delay=0.1)
                 else:
                     if root_status == "Ready" and not sep_confirmed:
                         root_status = "Enrolled"
-                    await queue.put({"type": "thinking", "message": f"  Evidence: skipped (OEP path) → {root_status}"})
+                    await emit({"type": "thinking", "scope": "pipeline", "message": f"  All checks passed. Enrolling member via standard OEP path."}, delay=0.08)
 
-                # Validate final status
+                # Validate
                 valid_statuses = {"Enrolled", "Enrolled (SEP)", "In Review", "Processing Failed"}
                 if root_status not in valid_statuses:
                     root_status = "In Review"
@@ -291,23 +331,45 @@ async def _run_batch_streaming(
                     )
 
                 processed += 1
-                await queue.put({
+                if root_status == "In Review":
+                    in_review += 1
+                await emit({
                     "type": "member_result",
                     "subscriber_id": sid,
                     "name": member_name,
                     "status": root_status,
                     "summary": summary,
+                }, delay=0.05)
+                await emit({
+                    "type": "pipeline_progress",
+                    "done": processed + failed,
+                    "total": total_members,
+                    "enrolled": processed - in_review,
+                    "inReview": in_review,
+                    "failed": failed,
+                    "currentMember": member_name,
+                    "currentStatus": root_status,
                 })
 
             except Exception as e:
                 failed += 1
-                await queue.put({"type": "thinking", "message": f"  ⚠ Pipeline error for {member_name}: {e}"})
-                await queue.put({
+                await emit({"type": "thinking", "scope": "pipeline", "message": f"  Pipeline error for {member_name}: {e}"})
+                await emit({
                     "type": "member_result",
                     "subscriber_id": sid,
                     "name": member_name,
                     "status": "Processing Failed",
                     "summary": str(e),
+                }, delay=0.05)
+                await emit({
+                    "type": "pipeline_progress",
+                    "done": processed + failed,
+                    "total": total_members,
+                    "enrolled": processed - in_review,
+                    "inReview": in_review,
+                    "failed": failed,
+                    "currentMember": member_name,
+                    "currentStatus": "Processing Failed",
                 })
 
     await queue.put(None)  # sentinel
@@ -360,7 +422,7 @@ Tool rules:
 - Call get_subscriber_details when the user asks about a specific subscriber ID, their SEP reason, why they were enrolled under SEP, what evidence they submitted, or any details about a named member. The result includes a full 'sep' object with sep_type, supporting_signals, evidence submitted, and confidence — always use this data to answer SEP questions, never say the reason is not stored.
 - Call reprocess_in_review when the user wants to retry, reprocess, or re-run the pipeline on In Review members — either all of them or a specific subscriber. This handles both SEP members who have now submitted evidence and members whose data issues have been fixed.
 - Call analyze_member when the user asks about a specific member by name or subscriber ID, asks why someone is in review, asks about SEP details for a member, or asks about a member's enrollment outcome. analyze_member returns agent_summary which is a plain-English explanation — use it directly in your response without rephrasing.
-- For batch processing requests, use process_batch. Per-member results stream to the right panel automatically. In your final response, give ONLY a 1-line summary like "Batch complete — X enrolled, Y failed." Do NOT list individual members in your response text.
+- For batch processing requests, use process_batch. Per-member results stream to the right panel automatically. After the batch completes, write a proper conversational summary — 3-5 sentences covering: how many members were enrolled vs placed in review vs failed, any notable patterns (e.g. SEP members, missing evidence, hard blocks), and what the user might want to do next. Do NOT list individual members by name in the response text.
 - Prefer analyze_member over get_subscriber_details when the user wants an explanation of why a member is in their current status, not just raw field data.
 - For conversational messages (greetings, questions, explanations) — respond directly, do NOT call any tool.
 
@@ -375,13 +437,14 @@ Status meanings:
 - "Awaiting Clarification" = failed business validation (missing SSN, DOB, address etc.)
 
 RESPONSE FORMAT — strict rules:
-- Keep responses SHORT. 2-4 sentences max for data responses. No walls of text.
-- NEVER include "Next steps", "Key take-aways", "What this means", or any unsolicited advice sections.
+- Keep responses conversational and human. Write like a knowledgeable colleague explaining what just happened, not a system log.
+- For simple data queries (status check, member lookup): 2-3 sentences is fine.
+- For actions that completed (batch processed, validation run, batch created): write 3-5 sentences. Explain what happened, what the numbers mean, and what the user might want to do next. This is the main response the user reads — make it useful.
+- NEVER include "Next steps", "Key take-aways", "What this means", or any unsolicited advice sections as headers.
 - NEVER repeat information the user didn't ask for.
-- For data responses: one short sentence summary + a table if there are counts. That's it.
 - For member detail (analyze_member): show the agent_summary as-is, then the SEP context if present. No extra commentary.
-- For conversational responses: reply naturally in 1-2 sentences.
 - Do NOT add markdown headers like **Member Detail** or **AI-generated summary** — just present the data cleanly.
+- You may use a short markdown table when showing counts across multiple categories.
 
 SUGGESTIONS — mandatory format rules:
 - Always end action/data responses with a SUGGESTIONS line.
@@ -1356,14 +1419,14 @@ async def stream_chat_response(
     messages = _build_messages(history, system_context)
 
     # ── Round 0 kickoff ──────────────────────────────────────────────────────
-    yield send_event({"type": "thinking", "message": "Received your message — routing to orchestrator..."})
+    yield send_event({"type": "thinking", "message": "Received your message — understanding your request..."})
 
     try:
         for round_num in range(8):
             if round_num == 0:
-                yield send_event({"type": "thinking", "message": "Orchestrator analysing intent and selecting tool..."})
+                yield send_event({"type": "thinking", "message": "Deciding what action to take..."})
             else:
-                yield send_event({"type": "thinking", "message": f"Orchestrator reviewing tool result (round {round_num + 1})..."})
+                yield send_event({"type": "thinking", "message": "Reviewing results and deciding next step..."})
 
             response = await client.chat.completions.create(
                 messages=messages,
@@ -1380,10 +1443,25 @@ async def stream_chat_response(
             # ── Orchestrator decided ─────────────────────────────────────────
             if choice.finish_reason == "tool_calls" and msg.tool_calls:
                 tool_names = [tc.function.name for tc in msg.tool_calls]
-                tool_label = " + ".join(t.replace("_", " ") for t in tool_names)
-                yield send_event({"type": "thinking", "message": f"Orchestrator dispatching → {tool_label}"})
+                # Map tool names to business-friendly labels
+                _tool_labels = {
+                    "get_system_status": "checking system status",
+                    "check_edi_structure": "scanning EDI files",
+                    "run_business_validation": "validating members",
+                    "create_batch": "creating a batch",
+                    "process_batch": "running enrollment pipeline",
+                    "get_batch_result": "checking batch result",
+                    "get_clarifications": "fetching clarifications",
+                    "get_enrolled_members": "looking up enrolled members",
+                    "analyze_member": "analyzing member record",
+                    "get_subscriber_details": "loading member details",
+                    "retry_failed_members": "re-queuing failed members",
+                    "reprocess_in_review": "reprocessing in-review members",
+                }
+                tool_label = " + ".join(_tool_labels.get(t, t.replace("_", " ")) for t in tool_names)
+                yield send_event({"type": "thinking", "message": f"Action: {tool_label}"})
             else:
-                yield send_event({"type": "thinking", "message": "Orchestrator composing final response..."})
+                yield send_event({"type": "thinking", "message": "Preparing response..."})
 
             # ---- Tool call round ----
             if choice.finish_reason == "tool_calls" and msg.tool_calls:
@@ -1413,46 +1491,45 @@ async def stream_chat_response(
                     # ── Pre-execution thinking event ─────────────────────────
                     if tool_name == "analyze_member":
                         sid = tool_args.get('subscriber_id', '')
-                        thinking_msg = f"Tool: analyze_member — fetching record for {sid}"
-                        exec_msg    = f"Running AI enrollment analysis for {sid}..."
+                        thinking_msg = f"Looking up enrollment record for {sid}..."
+                        exec_msg    = f"Running AI analysis for {sid}..."
                     elif tool_name == "process_batch":
                         bid = tool_args.get('batch_id', '') or 'pending batch'
-                        thinking_msg = f"Tool: process_batch — launching pipeline for {bid}"
-                        exec_msg    = f"Streaming enrollment pipeline for {bid}..."
+                        thinking_msg = f"Starting enrollment pipeline for {bid}..."
+                        exec_msg    = f"Processing members through the enrollment pipeline..."
                     elif tool_name == "get_subscriber_details":
                         sid = tool_args.get('subscriber_id', '')
-                        thinking_msg = f"Tool: get_subscriber_details — loading {sid}"
-                        exec_msg    = f"Reading subscriber record {sid} from MongoDB..."
+                        thinking_msg = f"Loading member record for {sid}..."
+                        exec_msg    = f"Fetching details for {sid}..."
                     elif tool_name == "get_system_status":
-                        query = tool_args.get('query', 'all')
-                        thinking_msg = f"Tool: get_system_status — query={query}"
-                        exec_msg    = "Aggregating member counts and batch status from database..."
+                        thinking_msg = "Checking current system status..."
+                        exec_msg    = "Counting members, batches, and files across all stages..."
                     elif tool_name == "check_edi_structure":
-                        thinking_msg = "Tool: check_edi_structure — scanning EDI files"
-                        exec_msg    = "Parsing EDI 834 files on disk, checking segment structure..."
+                        thinking_msg = "Scanning EDI files for structural issues..."
+                        exec_msg    = "Validating file format and segment structure..."
                     elif tool_name == "run_business_validation":
-                        thinking_msg = "Tool: run_business_validation — validating pending members"
-                        exec_msg    = "Applying SSN, DOB, address and coverage rules to each member..."
+                        thinking_msg = "Running business validation on pending members..."
+                        exec_msg    = "Checking SSN, date of birth, address, and coverage rules..."
                     elif tool_name == "create_batch":
-                        thinking_msg = "Tool: create_batch — bundling Ready members"
-                        exec_msg    = "Grouping all Ready members into a new enrollment batch..."
+                        thinking_msg = "Bundling ready members into a new batch..."
+                        exec_msg    = "Grouping all Ready members for enrollment..."
                     elif tool_name == "get_clarifications":
-                        thinking_msg = "Tool: get_clarifications — fetching Awaiting Clarification list"
-                        exec_msg    = "Querying MongoDB for members with validation failures..."
+                        thinking_msg = "Fetching members that need attention..."
+                        exec_msg    = "Loading members with outstanding validation issues..."
                     elif tool_name == "get_enrolled_members":
                         date = tool_args.get('date', '')
-                        thinking_msg = f"Tool: get_enrolled_members — date={date or 'all'}"
-                        exec_msg    = f"Querying enrolled members{' for ' + date if date else ''}..."
+                        thinking_msg = f"Looking up enrolled members{' for ' + date if date else ''}..."
+                        exec_msg    = f"Querying enrollment records..."
                     elif tool_name == "retry_failed_members":
-                        thinking_msg = "Tool: retry_failed_members — re-queuing failed members"
-                        exec_msg    = "Resetting Processing Failed members back to Ready status..."
+                        thinking_msg = "Re-queuing failed members for retry..."
+                        exec_msg    = "Resetting failed members back to Ready status..."
                     elif tool_name == "reprocess_in_review":
                         sid = tool_args.get('subscriber_id', '')
-                        thinking_msg = f"Tool: reprocess_in_review — target={sid or 'all In Review'}"
-                        exec_msg    = f"Re-running enrollment pipeline on {sid or 'all In Review members'}..."
+                        thinking_msg = f"Re-running pipeline on {sid or 'all In Review members'}..."
+                        exec_msg    = f"Sending {'member' if sid else 'In Review members'} back through enrollment..."
                     else:
-                        thinking_msg = f"Tool: {tool_name} — executing"
-                        exec_msg    = f"Running {tool_name.replace('_', ' ')}..."
+                        thinking_msg = f"Running {tool_name.replace('_', ' ')}..."
+                        exec_msg    = f"Executing {tool_name.replace('_', ' ')}..."
 
                     yield send_event({"type": "thinking", "message": thinking_msg})
                     yield send_event({"type": "thinking", "message": exec_msg})
@@ -1486,8 +1563,8 @@ async def stream_chat_response(
                             yield send_event({
                                 "type": "status_update",
                                 "message": (
-                                    f"Batch complete — {stream_processed} enrolled, "
-                                    f"{stream_failed} failed."
+                                    f"✓ Enrollment complete — {stream_processed} enrolled"
+                                    + (f", {stream_failed} failed" if stream_failed else "")
                                 ),
                                 "details": {
                                     "batchId": batch_id_stream,
@@ -1515,22 +1592,22 @@ async def stream_chat_response(
                                 in_review = mc.get("in_review_count", 0)
                                 clarifications = mc.get("awaiting_clarification_count", 0)
                                 ready = mc.get("ready_count", 0)
-                                done_msg = f"✓ System status — {enrolled} enrolled, {ready} ready, {in_review} in review, {clarifications} awaiting clarification"
+                                done_msg = f"✓ {enrolled} enrolled, {ready} ready, {in_review} in review, {clarifications} awaiting clarification"
                             elif tool_name == "analyze_member":
                                 name = parsed.get('name', '')
                                 status = parsed.get('status', '')
                                 has_sep = parsed.get('sep') is not None
-                                done_msg = f"✓ Member record loaded — {name} ({status}){', SEP detected' if has_sep else ''}"
+                                done_msg = f"✓ {name} — {status}{', SEP detected' if has_sep else ''}"
                             elif tool_name == "get_clarifications":
                                 total = parsed.get('total', 0)
-                                done_msg = f"✓ Found {total} member{'s' if total != 1 else ''} awaiting clarification"
+                                done_msg = f"✓ {total} member{'s' if total != 1 else ''} need{'s' if total == 1 else ''} attention"
                             elif tool_name == "get_enrolled_members":
                                 total = parsed.get('total', 0)
-                                done_msg = f"✓ Found {total} enrolled member{'s' if total != 1 else ''}"
+                                done_msg = f"✓ {total} enrolled member{'s' if total != 1 else ''} found"
                             elif tool_name == "create_batch":
                                 count = parsed.get('ready_count_batched', '?')
                                 bid = parsed.get('batch_id', '')
-                                done_msg = f"✓ Batch {bid} created — {count} members bundled"
+                                done_msg = f"✓ Batch created — {count} member{'s' if count != 1 else ''} bundled"
                             elif tool_name == "check_edi_structure":
                                 healthy = parsed.get('healthy', 0)
                                 issues = parsed.get('issues', 0)
@@ -1538,22 +1615,22 @@ async def stream_chat_response(
                             elif tool_name == "run_business_validation":
                                 validated = parsed.get('validated', 0)
                                 clarifications = parsed.get('clarifications', 0)
-                                done_msg = f"✓ Validation done — {validated} ready, {clarifications} need clarification"
+                                done_msg = f"✓ Validation complete — {validated} ready, {clarifications} need clarification"
                             elif tool_name == "get_subscriber_details":
                                 name = parsed.get('name', '')
                                 status = parsed.get('status', '')
-                                done_msg = f"✓ Subscriber loaded — {name} is {status}"
+                                done_msg = f"✓ {name} — {status}"
                             elif tool_name == "retry_failed_members":
                                 requeued = parsed.get('requeued', 0)
-                                done_msg = f"✓ {requeued} failed member{'s' if requeued != 1 else ''} re-queued as Ready"
+                                done_msg = f"✓ {requeued} member{'s' if requeued != 1 else ''} re-queued for retry"
                             elif tool_name == "reprocess_in_review":
                                 count = parsed.get('memberCount', '?')
-                                done_msg = f"✓ Reprocessing {count} In Review member{'s' if count != 1 else ''} — pipeline started"
+                                done_msg = f"✓ {count} in-review member{'s' if count != 1 else ''} sent back through pipeline"
                             elif tool_name == "get_batch_result":
                                 status = parsed.get('status', '')
                                 processed = parsed.get('processedCount') or parsed.get('processed', '?')
                                 failed = parsed.get('failedCount') or parsed.get('failed', 0)
-                                done_msg = f"✓ Batch result — {status}, {processed} processed, {failed} failed"
+                                done_msg = f"✓ Batch {status} — {processed} processed, {failed} failed"
                             else:
                                 done_msg = f"✓ {tool_name.replace('_', ' ')} completed"
                             yield send_event({
@@ -1579,7 +1656,7 @@ async def stream_chat_response(
 
             # ---- Final text response ----
             full_response = msg.content or ""
-            yield send_event({"type": "thinking", "message": "Formulating response from tool results..."})
+            yield send_event({"type": "thinking", "message": "Summarising results..."})
             suggestions = []
             response_text = full_response
 

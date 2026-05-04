@@ -234,6 +234,8 @@ async def stream_batch_enrollment(batch_id: str):
                 break
             yield send(event)
             yield ": \n\n"
+            # Small yield to let the event loop flush bytes before the next event
+            await asyncio.sleep(0)
             if event.get("type") == "member_result":
                 if event.get("status") == "Processing Failed":
                     failed += 1

@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import styles from './release-staging.module.css';
 import { Package, X, Send, ShieldCheck, AlertCircle, CheckCircle2, ChevronRight } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import useUIStore from '@/store/uiStore';
 
 // --- helpers -----------------------------------------------------------------
 
@@ -46,56 +47,41 @@ function groupEventsByMember(events) {
   return { preGroupEvents, groups };
 }
 
-// --- Member card: live steps -> collapses to result card on completion -------
+// --- Member card -------------------------------------------------------------
+// While processing: collapsed row with a spinner.
+// When done: collapsed result card. User can expand to see reasoning steps.
 
-function MemberCard({ group, isActive, onToggle }) {
+function MemberCard({ group, isExpanded, onToggle }) {
   const result = group.result;
   const isDone = !!result;
-  const color = result ? statusColor(result.status) : null;
+  const color = isDone ? statusColor(result.status) : null;
 
-  // Collapsed result card (shown after processing completes)
-  if (isDone && !isActive) {
-    const badgeCls = color === 'green' ? styles.memberBadgeGreen
-      : color === 'amber' ? styles.memberBadgeAmber
-      : styles.memberBadgeRed;
-    const dotCls = color === 'green' ? styles.dotGreen
-      : color === 'amber' ? styles.dotAmber
-      : styles.dotRed;
-    const statusLabel = result.message?.split('->')[1]?.trim() || result.status || '';
+  const dotCls = !isDone ? styles.dotPulse
+    : color === 'green' ? styles.dotGreen
+    : color === 'amber' ? styles.dotAmber
+    : styles.dotRed;
 
-    return (
-      <div className={`${styles.memberCard} ${styles.memberCardDone}`} onClick={onToggle}>
-        <span className={`${styles.memberDot} ${dotCls}`} />
-        <span className={styles.memberCardName}>
-          {group.headerMsg.replace('-- Starting pipeline for ', '').replace('-- ', '')}
-        </span>
-        <span className={`${styles.memberBadge} ${badgeCls}`}>{statusLabel}</span>
-        <span className={styles.memberChevron}>
-          <ChevronRight size={13} />
-        </span>
-      </div>
-    );
-  }
+  const badgeCls = color === 'green' ? styles.memberBadgeGreen
+    : color === 'amber' ? styles.memberBadgeAmber
+    : styles.memberBadgeRed;
 
-  // Expanded card (active processing OR manually expanded after done)
-  const dotCls = isDone
-    ? (color === 'green' ? styles.dotGreen : color === 'amber' ? styles.dotAmber : styles.dotRed)
-    : styles.dotPulse;
+  const memberName = group.headerMsg.replace('-- Starting pipeline for ', '').replace('-- ', '');
+  const statusLabel = result?.message?.split('->')[1]?.trim() || result?.status || '';
 
   return (
-    <div className={`${styles.memberCard} ${styles.memberCardExpanded} ${isDone ? styles.memberCardExpandedDone : styles.memberCardExpandedActive}`}>
-      {/* Header row */}
-      <div className={styles.memberCardHeader} onClick={isDone ? onToggle : undefined} style={{ cursor: isDone ? 'pointer' : 'default' }}>
+    <div className={`${styles.memberCard} ${isDone ? styles.memberCardDone : styles.memberCardPending} ${isExpanded ? styles.memberCardExpanded : ''}`}>
+      {/* Always-visible header row */}
+      <div
+        className={styles.memberCardHeader}
+        onClick={isDone ? onToggle : undefined}
+        style={{ cursor: isDone ? 'pointer' : 'default' }}
+      >
         <span className={`${styles.memberDot} ${dotCls}`} />
-        <span className={styles.memberCardName}>
-          {group.headerMsg.replace('-- Starting pipeline for ', '').replace('-- ', '')}
-        </span>
+        <span className={styles.memberCardName}>{memberName}</span>
         {isDone ? (
           <>
-            <span className={`${styles.memberBadge} ${color === 'green' ? styles.memberBadgeGreen : color === 'amber' ? styles.memberBadgeAmber : styles.memberBadgeRed}`}>
-              {result.message?.split('->')[1]?.trim() || result.status}
-            </span>
-            <span className={`${styles.memberChevron} ${styles.memberChevronOpen}`}>
+            <span className={`${styles.memberBadge} ${badgeCls}`}>{statusLabel}</span>
+            <span className={`${styles.memberChevron} ${isExpanded ? styles.memberChevronOpen : ''}`}>
               <ChevronRight size={13} />
             </span>
           </>
@@ -104,31 +90,30 @@ function MemberCard({ group, isActive, onToggle }) {
         )}
       </div>
 
-      {/* Steps */}
-      <div className={styles.memberSteps}>
-        {group.steps.map(ev => {
-          const isStepDone = ev.message?.startsWith('  ') && !ev.message?.includes('...');
-          const isWarn = ev.message?.includes('Warning') || ev.message?.includes('error');
-          return (
-            <div key={ev.id} className={styles.memberStep}>
-              <span className={`${styles.memberStepIcon} ${isStepDone ? styles.memberStepIconDone : isWarn ? styles.memberStepIconWarn : ''}`}>
-                {isStepDone ? '✓' : isWarn ? '!' : '·'}
-              </span>
-              <span className={`${styles.memberStepText} ${isStepDone ? styles.memberStepTextDone : isWarn ? styles.memberStepTextWarn : ''}`}>
-                {ev.message}
-              </span>
+      {/* Expandable steps — only rendered when expanded */}
+      {isDone && isExpanded && (
+        <div className={styles.memberSteps}>
+          {group.steps.map(ev => {
+            const msg = ev.message?.trim() || '';
+            const isWarn = /warning|error|failed|not strong/i.test(msg);
+            return (
+              <div key={ev.id} className={styles.memberStep}>
+                <span className={`${styles.memberStepIcon} ${isWarn ? styles.memberStepIconWarn : styles.memberStepIconDone}`}>
+                  {isWarn ? '!' : '✓'}
+                </span>
+                <span className={`${styles.memberStepText} ${isWarn ? styles.memberStepTextWarn : ''}`}>
+                  {msg}
+                </span>
+              </div>
+            );
+          })}
+          {result.summary && (
+            <div className={`${styles.memberResult} ${color === 'green' ? styles.memberResultGreen : color === 'amber' ? styles.memberResultAmber : styles.memberResultRed}`}>
+              <div className={styles.memberResultSummary}>{result.summary}</div>
             </div>
-          );
-        })}
-
-        {/* Result summary at bottom */}
-        {isDone && (
-          <div className={`${styles.memberResult} ${color === 'green' ? styles.memberResultGreen : color === 'amber' ? styles.memberResultAmber : styles.memberResultRed}`}>
-            <div className={styles.memberResultTitle}>{result.message}</div>
-            {result.summary && <div className={styles.memberResultSummary}>{result.summary}</div>}
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -140,7 +125,9 @@ function EnrollmentConsole({ batchId, memberCount, savedState, onStateUpdate, on
   const [processed, setProcessed] = useState(savedState?.processed || 0);
   const [failed, setFailed] = useState(savedState?.failed || 0);
   const [phase, setPhase] = useState(savedState?.phase || 'running');
-  // expandedId: which member card is expanded (null = all collapsed)
+  // 'connecting' until the first event arrives, then 'active'
+  const [initPhase, setInitPhase] = useState(savedState ? 'active' : 'connecting');
+  // expandedId: which member card is manually expanded (null = all collapsed)
   const [expandedId, setExpandedId] = useState(null);
   const timelineEndRef = useRef(null);
   const alreadyDone = savedState?.phase === 'done';
@@ -189,46 +176,29 @@ function EnrollmentConsole({ batchId, memberCount, savedState, onStateUpdate, on
 
             const id = Math.random().toString(36).slice(2);
 
-            if (payload.type === 'start') {
-              setEvents(prev => [...prev, {
-                id, type: 'info',
-                message: `Pipeline started - ${payload.memberCount} members`,
-                ts: new Date().toISOString(),
-              }]);
-            } else if (payload.type === 'thinking') {
+            if (payload.type === 'thinking') {
+              setInitPhase('active');
               const isHeader = payload.message.startsWith('--');
               const evType = isHeader ? 'header' : 'stage';
-              if (isHeader) {
-                // Auto-expand the new member being processed
-                setExpandedId(id);
-              }
               setEvents(prev => [...prev, { id, type: evType, message: payload.message, ts: new Date().toISOString() }]);
             } else if (payload.type === 'member_result') {
-              const color = statusColor(payload.status);
+              setInitPhase('active');
               const ev = {
-                id, type: 'result', color,
+                id, type: 'result',
                 status: payload.status,
                 message: `${payload.name} (${payload.subscriber_id}) -> ${payload.status}`,
                 summary: payload.summary,
                 ts: new Date().toISOString(),
               };
               setEvents(prev => [...prev, ev]);
-              // Collapse the just-finished member after a short delay for visual effect
-              setTimeout(() => setExpandedId(null), 600);
               if (payload.status === 'Processing Failed') setFailed(f => f + 1);
               else setProcessed(p => p + 1);
             } else if (payload.type === 'done') {
               setPhase('done');
-              setExpandedId(null);
-              const doneEv = {
-                id, type: 'done',
-                message: `All done - ${payload.processed} enrolled, ${payload.failed} failed`,
-                ts: new Date().toISOString(),
-              };
               setEvents(prev => {
-                const next = [...prev, doneEv];
-                // Schedule parent state update outside render cycle
+                const next = prev;
                 pendingStateRef.current = {
+                  batchId,
                   events: next,
                   processed: payload.processed,
                   failed: payload.failed,
@@ -256,12 +226,20 @@ function EnrollmentConsole({ batchId, memberCount, savedState, onStateUpdate, on
     return () => controller.abort();
   }, [batchId, alreadyDone, flushPendingState]);
 
+  // Scroll to bottom only when a new member result arrives (not on every thinking event)
+  const prevProcessedRef = useRef(processed);
   useEffect(() => {
-    timelineEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [events]);
+    if (processed !== prevProcessedRef.current || phase === 'done') {
+      timelineEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      prevProcessedRef.current = processed;
+    }
+  }, [processed, phase]);
 
   const progress = memberCount > 0 ? Math.round(((processed + failed) / memberCount) * 100) : 0;
-  const { preGroupEvents, groups } = groupEventsByMember(events);
+  const { groups } = groupEventsByMember(events);
+  // Split into done and the single in-progress member (last group without a result)
+  const doneGroups = groups.filter(g => !!g.result);
+  const activeGroup = groups.find(g => !g.result) || null;
 
   return (
     <div className={styles.consoleOverlay} onClick={e => e.target === e.currentTarget && phase === 'done' && onClose()}>
@@ -279,7 +257,11 @@ function EnrollmentConsole({ batchId, memberCount, savedState, onStateUpdate, on
           <div className={styles.consoleHeaderRight}>
             {processed > 0 && <span className={styles.consoleMiniStat} style={{ color: '#16a34a' }}>✓ {processed}</span>}
             {failed > 0 && <span className={styles.consoleMiniStat} style={{ color: '#dc2626' }}>✗ {failed}</span>}
-            {phase === 'running' && <span className={styles.consoleMiniStat} style={{ color: 'var(--text-muted)' }}>{memberCount - processed - failed} left</span>}
+            {phase === 'running' && (
+              <span className={styles.consoleMiniStat} style={{ color: 'var(--text-muted)' }}>
+                {memberCount - processed - failed} left
+              </span>
+            )}
             {phase === 'done' && (
               <button className={styles.consoleCloseBtn} onClick={onClose}><X size={16} /></button>
             )}
@@ -296,31 +278,40 @@ function EnrollmentConsole({ batchId, memberCount, savedState, onStateUpdate, on
 
         {/* Scrollable body */}
         <div className={styles.consoleBody}>
-          {/* Pre-member info */}
-          {preGroupEvents.map(ev => (
-            <div key={ev.id} className={styles.consoleInfoRow}>
-              <span className={styles.dotBlue} />
-              <span className={styles.consoleInfoText}>{ev.message}</span>
-            </div>
-          ))}
 
-          {/* Member cards */}
-          {groups.map(group => (
+          {/* Connecting / initializing state */}
+          {initPhase === 'connecting' && (
+            <div className={styles.initState}>
+              <div className={styles.initSpinner}>
+                <span /><span /><span /><span />
+              </div>
+              <div className={styles.initText}>
+                <span className={styles.initTitle}>Starting enrollment pipeline</span>
+                <span className={styles.initSub}>Connecting to AI Refinery and loading {memberCount} member{memberCount !== 1 ? 's' : ''}…</span>
+              </div>
+            </div>
+          )}
+
+          {/* Completed member cards — collapsed by default, expandable */}
+          {doneGroups.map(group => (
             <MemberCard
               key={group.id}
               group={group}
-              isActive={expandedId === group.id}
+              isExpanded={expandedId === group.id}
               onToggle={() => setExpandedId(expandedId === group.id ? null : group.id)}
             />
           ))}
 
-          {/* Live indicator */}
-          {phase === 'running' && (
-            <div className={styles.consoleInfoRow}>
-              <span className={styles.dotPulse} />
-              <span className={styles.consolePulsingDots}><span /><span /><span /></span>
-            </div>
+          {/* Currently processing member — always collapsed spinner row */}
+          {activeGroup && (
+            <MemberCard
+              key={activeGroup.id}
+              group={activeGroup}
+              isExpanded={false}
+              onToggle={() => {}}
+            />
           )}
+
           <div ref={timelineEndRef} />
         </div>
 
@@ -350,7 +341,7 @@ export default function ReleaseStagingPage() {
   const [showConsole, setShowConsole] = useState(false);
   const [consoleBatchId, setConsoleBatchId] = useState(null);
   const [consoleMemberCount, setConsoleMemberCount] = useState(0);
-  const [completedRuns, setCompletedRuns] = useState({});
+  const { completedRuns, saveCompletedRun } = useUIStore();
   const queryClient = useQueryClient();
 
   const { data: batches = [], isLoading } = useQuery({
@@ -387,8 +378,8 @@ export default function ReleaseStagingPage() {
   };
 
   const handleStateUpdate = useCallback((state) => {
-    setCompletedRuns(prev => ({ ...prev, [state.batchId || consoleBatchId]: state }));
-  }, [consoleBatchId]);
+    saveCompletedRun(state);
+  }, [saveCompletedRun]);
 
   return (
     <div className={styles.page}>
