@@ -184,55 +184,51 @@ async def _run_batch_streaming(
             sid = member.get("subscriber_id", "")
             member_name = _extract_member_name(member)
 
-            await queue.put({"type": "thinking", "message": f"── Starting pipeline for {member_name} ({sid})"})
+            await queue.put({"type": "thinking", "message": f"-- Starting pipeline for {member_name} ({sid})"})
 
             try:
                 full_record = build_engine_input(member)
 
                 # ── Stage 1: Classification ──────────────────────────────────
-                await queue.put({"type": "thinking", "message": f"  Classifier — analysing enrollment type and SEP signals..."})
                 classification_record = _classification_view(full_record)
                 classification = _json.loads(await EnrollmentClassifierAgent(_json.dumps(classification_record)))
                 sep_candidate = classification.get("sep_candidate", False)
                 enroll_type = classification.get("enrollment_type", "Unknown")
                 within_oep = classification.get("is_within_oep")
                 oep_label = "within OEP" if within_oep else ("outside OEP" if within_oep is False else "OEP unknown")
-                await queue.put({"type": "thinking", "message": f"  ✓ {enroll_type} — SEP candidate: {sep_candidate}, {oep_label}"})
+                await queue.put({"type": "thinking", "message": f"  Classifier: {enroll_type}, SEP candidate: {sep_candidate}, {oep_label}"})
 
                 # ── Stage 2: Branch analysis ─────────────────────────────────
                 if sep_candidate:
-                    await queue.put({"type": "thinking", "message": f"  SEP Inference — detecting SEP type from history changes..."})
                     sep_record = _sep_inference_view(full_record)
                     branch_analysis = _json.loads(await SepInferenceAgent(_json.dumps({"record": sep_record, "classification": classification})))
                     sep_confirmed = branch_analysis.get("sep_confirmed", False)
                     causality = branch_analysis.get("sep_causality") or {}
                     sep_type_label = causality.get("sep_candidate", "unknown")
                     confidence = causality.get("confidence", 0)
-                    await queue.put({"type": "thinking", "message": f"  ✓ SEP {'confirmed' if sep_confirmed else 'not confirmed'} — {sep_type_label} ({int(confidence * 100) if isinstance(confidence, float) else confidence}% confidence)"})
+                    conf_pct = int(confidence * 100) if isinstance(confidence, float) else confidence
+                    await queue.put({"type": "thinking", "message": f"  SEP Inference: {'confirmed' if sep_confirmed else 'not confirmed'} — {sep_type_label} ({conf_pct}% confidence)"})
                 else:
-                    await queue.put({"type": "thinking", "message": f"  Normal Enrollment — building timeline and coverage analysis..."})
                     normal_record = _normal_flow_view(full_record)
                     branch_analysis = _json.loads(await NormalEnrollmentAgent(_json.dumps({"record": normal_record, "classification": classification})))
                     sep_confirmed = False
                     snapshots = (branch_analysis.get("timeline") or {}).get("observations", {}).get("snapshot_count", 1)
-                    await queue.put({"type": "thinking", "message": f"  ✓ OEP path — {snapshots} snapshot(s) analysed, no SEP signals"})
+                    await queue.put({"type": "thinking", "message": f"  Normal flow: OEP path, {snapshots} snapshot(s) analysed"})
 
                 # ── Stage 3: Authority ───────────────────────────────────────
-                await queue.put({"type": "thinking", "message": f"  Authority — determining enrollment source and payer discretion..."})
                 source = full_record.get("source_system", "Employer")
                 payer_discretion = source not in {"Exchange", "CMS", "FFE", "SBE"}
                 authority = {"authority_analysis": {"source": source, "payer_discretion": payer_discretion}}
-                await queue.put({"type": "thinking", "message": f"  ✓ Source: {source}, payer discretion: {payer_discretion}"})
+                await queue.put({"type": "thinking", "message": f"  Authority: source={source}, payer discretion={payer_discretion}"})
 
                 # ── Stage 4: Decision ────────────────────────────────────────
-                await queue.put({"type": "thinking", "message": f"  Decision — evaluating hard blocks, validation issues, final status..."})
                 decision_record = _decision_view(full_record)
                 decision = _json.loads(await DecisionAgent(_json.dumps({"record": decision_record, "classification": classification, "analysis": branch_analysis})))
                 hard_blocks = (decision.get("agent_analysis_patch") or {}).get("hard_blocks", [])
                 requires_evidence = (decision.get("agent_analysis_patch") or {}).get("requires_evidence_check", False)
                 interim_status = decision.get("root_status_recommended", "In Review")
-                blocks_label = f", blocks: {hard_blocks}" if hard_blocks else ", no hard blocks"
-                await queue.put({"type": "thinking", "message": f"  ✓ Interim status: {interim_status}{blocks_label}"})
+                blocks_label = f" — blocks: {', '.join(hard_blocks)}" if hard_blocks else " — no hard blocks"
+                await queue.put({"type": "thinking", "message": f"  Decision: interim={interim_status}{blocks_label}"})
 
                 # ── Stage 5: Evidence check (SEP only) ──────────────────────
                 evidence_check = None
@@ -240,7 +236,6 @@ async def _run_batch_streaming(
 
                 if sep_confirmed and requires_evidence:
                     sep_type = (branch_analysis.get("sep_causality") or {}).get("sep_candidate")
-                    await queue.put({"type": "thinking", "message": f"  Evidence Check — verifying submitted documents for {sep_type}..."})
                     evidence_check = _json.loads(await EvidenceCheckAgent(_json.dumps({"subscriber_id": sid, "sep_type": sep_type})))
                     evidence_complete = evidence_check.get("evidence_complete", False)
                     missing = evidence_check.get("missing_docs", [])
@@ -250,12 +245,11 @@ async def _run_batch_streaming(
                         root_status = "Enrolled (SEP)"
                     else:
                         root_status = "In Review"
-                    await queue.put({"type": "thinking", "message": f"  ✓ Evidence {'complete' if evidence_complete else 'incomplete'} — {len(missing)} doc(s) missing → {root_status}"})
+                    await queue.put({"type": "thinking", "message": f"  Evidence: {'complete' if evidence_complete else f'incomplete — {len(missing)} doc(s) missing'} → {root_status}"})
                 else:
-                    # OEP clean path: promote Ready → Enrolled
                     if root_status == "Ready" and not sep_confirmed:
                         root_status = "Enrolled"
-                    await queue.put({"type": "thinking", "message": f"  ✓ Evidence check skipped (OEP path) → {root_status}"})
+                    await queue.put({"type": "thinking", "message": f"  Evidence: skipped (OEP path) → {root_status}"})
 
                 # Validate final status
                 valid_statuses = {"Enrolled", "Enrolled (SEP)", "In Review", "Processing Failed"}

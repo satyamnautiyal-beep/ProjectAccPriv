@@ -42,6 +42,10 @@ yarn-error.log*
 .pnpm-debug.log*
 *.log
 
+
+.kiro/
+
+
 # --- Environment & Secrets ---
 .env
 .env.local
