@@ -118,12 +118,21 @@ def setup_bigquery() -> None:
         print("❌  GCP_PROJECT_ID is not set in .env — aborting.")
         return
 
-    print(f"\n🔧  Setting up tables in existing dataset '{PROJECT_ID}.{DATASET}'\n")
+    print(f"\n🔧  Setting up tables in dataset '{PROJECT_ID}.{DATASET}'\n")
 
     client = bigquery.Client(project=PROJECT_ID)
 
+    # Ensure dataset exists (exists_ok=True — safe to run even if already created)
+    try:
+        dataset_ref = bigquery.Dataset(f"{PROJECT_ID}.{DATASET}")
+        dataset_ref.location = "US"
+        client.create_dataset(dataset_ref, exists_ok=True)
+        print(f"  ✅  Dataset '{DATASET}' ready")
+    except Exception as exc:
+        print(f"  ⚠️   Could not verify dataset (may already exist): {exc}")
+
     # Tables
-    print("📋  Creating tables...")
+    print("\n📋  Creating tables...")
     run_ddl(client, MEMBERS_TABLE_DDL, "members table")
     run_ddl(client, BATCHES_TABLE_DDL, "batches table")
 

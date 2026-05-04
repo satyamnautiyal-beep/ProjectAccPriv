@@ -108,9 +108,8 @@ def summarize_system_status():
     batches = []
 
     if db is not None:
-        for m_doc in db.members.find({}, {"_id": 0, "status": 1}):
-            status = m_doc.get("status", "Unknown")
-            member_counts[status] = member_counts.get(status, 0) + 1
+        # Use single aggregation query instead of iterating all rows
+        member_counts = db.members.count_by_status()
 
         batches = list(db.batches.find({}, {"_id": 0}))
         batch_count = len(batches)

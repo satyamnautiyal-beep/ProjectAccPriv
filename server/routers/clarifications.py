@@ -33,15 +33,17 @@ def update_clarification(update: ClarificationUpdate):
     for c in claris:
         if c["id"] == update.id:
             if c["status"] == 'Awaiting Response':
-                c["status"] = 'Resolved'
-                # Mutate member back to Ready in BigQuery
+                # Update BigQuery FIRST — only mark resolved if DB write succeeds
                 from db.bq_connection import get_database
                 db = get_database()
-                if db is not None:
-                    db.members.update_one(
-                        {"subscriber_id": c["memberId"]},
-                        {"$set": {"status": "Ready"}}
-                    )
+                if db is None:
+                    raise HTTPException(status_code=503, detail="Database unavailable — cannot resolve clarification")
+                db.members.update_one(
+                    {"subscriber_id": c["memberId"]},
+                    {"$set": {"status": "Ready"}}
+                )
+                # DB write succeeded — now update disk state
+                c["status"] = 'Resolved'
                 write_clarifications(claris)
                 return {"success": True}
     raise HTTPException(status_code=400, detail="Clarification not found")

@@ -105,14 +105,19 @@ def check_structure():
                     edi_text = f.read()
                 parsed_data = parse_edi(edi_text)
                 
+                members_saved = 0
                 for transaction in parsed_data.get("transactions", []):
                     for m_data in transaction.get("members", []):
                         info = m_data.get("member_info", {})
                         sub_id = info.get("subscriber_id") or f"MEM-{os.urandom(4).hex()}"
                         m_data["subscriber_id"] = sub_id
                         m_data["status"] = "Pending Business Validation"
-                        save_member_to_bq(m_data)
-                
+                        saved = save_member_to_bq(m_data)
+                        if saved is None:
+                            raise Exception("BigQuery unavailable — check GCP_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS in .env")
+                        members_saved += 1
+
+                # Only delete the file AFTER all members are confirmed saved to BQ
                 os.remove(filepath)
                 st["status"] = "Parsed & Ingested"
                 new_healthy += 1
