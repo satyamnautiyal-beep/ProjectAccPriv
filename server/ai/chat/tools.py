@@ -116,7 +116,7 @@ TOOLS = [
         "function": {
             "name": "get_clarifications",
             "description": (
-                "Returns the full list of members in 'Awaiting Clarification' status from MongoDB, "
+                "Returns the full list of members in 'Awaiting Clarification' status from BigQuery, "
                 "including their subscriber ID, full name, and the exact validation issues "
                 "(e.g. 'Missing SSN', 'Invalid DOB', 'Incomplete Address'). "
                 "Always call this when the user asks: who needs attention, what are the issues, "
@@ -130,7 +130,7 @@ TOOLS = [
         "function": {
             "name": "get_enrolled_members",
             "description": (
-                "Queries MongoDB for enrolled members. Can filter by date and enrollment path. "
+                "Queries BigQuery for enrolled members. Can filter by date and enrollment path. "
                 "Use this when the user asks who was enrolled, how many enrolled today/yesterday, "
                 "SEP vs OEP breakdowns, or any question about enrolled member details."
             ),

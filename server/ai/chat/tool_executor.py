@@ -5,7 +5,7 @@ Add new tool handlers here as elif branches.
 import asyncio
 import json
 import os
-from datetime import datetime as _dt
+from datetime import datetime as _dt, timezone as _tz
 from typing import Any, Dict
 
 from .batch_jobs import _batch_jobs
@@ -50,7 +50,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
         #  BATCH MANAGEMENT                                                   #
         # ------------------------------------------------------------------ #
         elif name == "create_batch":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
 
             db = get_database()
             ready_count = db.members.count_documents({"status": "Ready"}) if db is not None else 0
@@ -68,9 +68,8 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 })
 
             # Inline the batch creation logic — cannot call the FastAPI endpoint directly
-            import time, random
-            from datetime import datetime as _datetime
-            batch_id = f"BCH-{_datetime.utcnow().strftime('%Y%m%d')}-{int(time.time()) % 1000}"
+            import time
+            batch_id = f"BCH-{_dt.now(_tz.utc).strftime('%Y%m%d')}-{int(time.time()) % 1000}"
             member_ids_list = [
                 m["subscriber_id"]
                 for m in db.members.find({"status": "Ready"}, {"_id": 0, "subscriber_id": 1})
@@ -80,7 +79,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 "status": "Awaiting Approval",
                 "membersCount": len(member_ids_list),
                 "member_ids": member_ids_list,
-                "createdAt": _datetime.utcnow().isoformat(),
+                "createdAt": _dt.now(_tz.utc),
             })
             db.members.update_many(
                 {"subscriber_id": {"$in": member_ids_list}},
@@ -93,7 +92,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             })
 
         elif name == "process_batch":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
 
             batch_id = args.get("batch_id", "").strip()
             db = get_database()
@@ -137,7 +136,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
 
             result = _batch_jobs.get(batch_id)
             if not result:
-                from db.mongo_connection import get_database
+                from db.bq_connection import get_database
                 db = get_database()
                 if db is not None:
                     batch = db.batches.find_one({"id": batch_id}, {"_id": 0})
@@ -148,7 +147,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                             "processedCount": batch.get("processedCount"),
                             "failedCount": batch.get("failedCount"),
                             "completedAt": batch.get("completedAt"),
-                            "source": "mongodb",
+                            "source": "bigquery",
                         })
                 return json.dumps({
                     "status": "unknown",
@@ -225,7 +224,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
         #  MEMBER QUERIES                                                     #
         # ------------------------------------------------------------------ #
         elif name == "get_clarifications":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             db = get_database()
             if db is None:
                 return json.dumps({"error": "Database not available"})
@@ -260,7 +259,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             return json.dumps({"total": len(results), "members": results})
 
         elif name == "get_enrolled_members":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             db = get_database()
             if db is None:
                 return json.dumps({"error": "Database not available"})
@@ -294,7 +293,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             return json.dumps({"total": len(result), "date_filter": date_filter or "all", "members": result})
 
         elif name == "retry_failed_members":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             db = get_database()
             if db is None:
                 return json.dumps({"error": "Database not available"})
@@ -309,8 +308,11 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             ids = [m["subscriber_id"] for m in failed_members]
             db.members.update_many(
                 {"subscriber_id": {"$in": ids}},
-                {"$set": {"status": "Ready", "retried_at": _dt.utcnow().isoformat()},
-                 "$unset": {"processing_error": ""}},
+                {"$set": {
+                    "status":           "Ready",
+                    "retried_at":       _dt.now(_tz.utc),
+                    "processing_error": None,
+                }},
             )
             return json.dumps({
                 "requeued": len(ids),
@@ -322,7 +324,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             })
 
         elif name == "reprocess_in_review":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             from ..workflows.enrollment_pipeline import run_batch_in_background
 
             db = get_database()
@@ -340,7 +342,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 return json.dumps({"error": f"No In Review members found for {target}"})
 
             ids = [m["subscriber_id"] for m in members_to_reprocess]
-            reprocess_batch_id = f"REVIEW-REPROCESS-{_dt.utcnow().strftime('%Y%m%d%H%M%S')}"
+            reprocess_batch_id = f"REVIEW-REPROCESS-{_dt.now(_tz.utc).strftime('%Y%m%d%H%M%S')}"
 
             db.members.update_many(
                 {"subscriber_id": {"$in": ids}},
@@ -351,7 +353,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                 "status": "Awaiting Approval",
                 "membersCount": len(ids),
                 "member_ids": ids,
-                "createdAt": _dt.utcnow().isoformat(),
+                "createdAt": _dt.now(_tz.utc),
                 "note": "Auto-created for In Review reprocessing",
             })
 
@@ -369,7 +371,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             })
 
         elif name == "get_subscriber_details":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             from datetime import datetime as _datetime
 
             db = get_database()
@@ -395,7 +397,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                     return None
                 try:
                     dob = _datetime.strptime(dob_str, "%Y-%m-%d")
-                    return int(((_datetime.utcnow() - dob).days) / 365.25)
+                    return int(((_dt.now(_tz.utc) - dob).days) / 365.25)
                 except Exception:
                     return None
 
@@ -469,7 +471,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             })
 
         elif name == "analyze_member":
-            from db.mongo_connection import get_database
+            from db.bq_connection import get_database
             from ..agents.router import EnrollmentRouterAgent
             from ..data.sanitizer import build_engine_input
 
@@ -519,7 +521,7 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
                         "status": root_status,
                         "agent_analysis": result.get("agent_analysis", {}),
                         "markers": result.get("markers", {}),
-                        "lastProcessedAt": _dt.utcnow().isoformat(),
+                        "lastProcessedAt": _dt.now(_tz.utc),
                     }},
                 )
                 return json.dumps({
@@ -538,3 +540,5 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
 
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+

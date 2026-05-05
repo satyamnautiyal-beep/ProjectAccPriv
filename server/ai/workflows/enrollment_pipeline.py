@@ -3,7 +3,7 @@ Enrollment pipeline workflows — background and streaming batch runners.
 """
 import asyncio
 import json
-from datetime import datetime as _dt
+from datetime import datetime as _dt, timezone as _tz
 from typing import Any, Dict, List
 
 from ..core.client import create_client, PROJECT_NAME
@@ -34,13 +34,14 @@ def _extract_member_name(member_doc: dict) -> str:
 
 async def run_batch_in_background(batch_id: str, members: List[Dict[str, Any]]) -> None:
     """
-    Runs the AI enrollment pipeline for a batch and writes results to MongoDB.
+    Runs the AI enrollment pipeline for a batch and writes results to BigQuery.
     Stores job status in the shared _batch_jobs registry (imported from batch_jobs).
     """
+    from datetime import timezone as _tz
     from ..chat.batch_jobs import _batch_jobs
-    from db.mongo_connection import get_database
+    from db.bq_connection import get_database
 
-    _batch_jobs[batch_id] = {"status": "running", "startedAt": _dt.utcnow().isoformat()}
+    _batch_jobs[batch_id] = {"status": "running", "startedAt": _dt.now(_tz.utc).isoformat()}
     db = get_database()
 
     try:
@@ -74,7 +75,7 @@ async def run_batch_in_background(batch_id: str, members: List[Dict[str, Any]]) 
                             "markers": markers,
                             "agent_summary": r.get("plain_english_summary"),
                             "status": root_status,
-                            "lastProcessedAt": _dt.utcnow().isoformat(),
+                            "lastProcessedAt": _dt.now(_tz.utc),
                         }},
                     )
                 processed += 1
@@ -87,7 +88,7 @@ async def run_batch_in_background(batch_id: str, members: List[Dict[str, Any]]) 
                             {"$set": {
                                 "status": "Processing Failed",
                                 "processing_error": str(member_err),
-                                "lastProcessedAt": _dt.utcnow().isoformat(),
+                                "lastProcessedAt": _dt.now(_tz.utc),
                             }},
                         )
                     except Exception:
@@ -105,7 +106,7 @@ async def run_batch_in_background(batch_id: str, members: List[Dict[str, Any]]) 
                     {"$set": {
                         "status": "Processing Failed",
                         "processing_error": "Pipeline did not return a result for this member",
-                        "lastProcessedAt": _dt.utcnow().isoformat(),
+                        "lastProcessedAt": _dt.now(_tz.utc),
                     }},
                 )
                 failed += 1
@@ -117,7 +118,7 @@ async def run_batch_in_background(batch_id: str, members: List[Dict[str, Any]]) 
                     "status": "Completed",
                     "processedCount": processed,
                     "failedCount": failed,
-                    "completedAt": _dt.utcnow().isoformat(),
+                    "completedAt": _dt.now(_tz.utc),
                 }},
             )
 
@@ -126,7 +127,7 @@ async def run_batch_in_background(batch_id: str, members: List[Dict[str, Any]]) 
             "batchId": batch_id,
             "processed": processed,
             "failed": failed,
-            "completedAt": _dt.utcnow().isoformat(),
+            "completedAt": _dt.now(_tz.utc),
         }
 
     except Exception as e:
@@ -134,7 +135,7 @@ async def run_batch_in_background(batch_id: str, members: List[Dict[str, Any]]) 
             "status": "failed",
             "batchId": batch_id,
             "error": str(e),
-            "failedAt": _dt.utcnow().isoformat(),
+            "failedAt": _dt.now(_tz.utc),
         }
         if db is not None:
             db.batches.update_one(
@@ -152,7 +153,8 @@ async def run_batch_streaming(
     Streaming variant — emits per-member SSE events via the queue.
     Sends a None sentinel when done.
     """
-    from db.mongo_connection import get_database
+    from datetime import timezone as _tz
+    from db.bq_connection import get_database
 
     async def emit(payload: dict, delay: float = 0.0) -> None:
         await queue.put(payload)
@@ -289,7 +291,7 @@ async def run_batch_streaming(
 
                 summary = decision.get("plain_english_summary")
 
-                # Persist to MongoDB
+                # Persist to BigQuery
                 if db is not None:
                     agent_analysis = {
                         "classification": classification,
@@ -317,7 +319,7 @@ async def run_batch_streaming(
                             "status": root_status,
                             "agent_analysis": agent_analysis,
                             "markers": markers,
-                            "lastProcessedAt": _dt.utcnow().isoformat(),
+                            "lastProcessedAt": _dt.now(_tz.utc),
                         }},
                     )
 
@@ -361,6 +363,7 @@ async def run_batch_streaming(
                 "status": "Completed",
                 "processedCount": processed,
                 "failedCount": failed,
-                "completedAt": _dt.utcnow().isoformat(),
+                "completedAt": _dt.now(_tz.utc),
             }},
         )
+

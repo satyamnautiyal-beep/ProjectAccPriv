@@ -66,7 +66,7 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
             "authority_analysis": {
                 "source": source,
                 "payer_discretion": payer_discretion,
-                "notes": "Add EDI envelope sender/receiver IDs to Mongo for deterministic classification.",
+                "notes": "Add EDI envelope sender/receiver IDs for deterministic classification.",
             }
         }
 
