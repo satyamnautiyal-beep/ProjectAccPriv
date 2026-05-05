@@ -553,6 +553,11 @@
   border-color: #f59e0b;
 }
 
+.timelineDotAgent {
+  background: #0ea5e9;
+  border-color: #0ea5e9;
+}
+
 @keyframes dotPulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
   50% { box-shadow: 0 0 0 4px rgba(59, 130, 246, 0); }
@@ -596,6 +601,72 @@
 .timelineMessageResult {
   color: #8b5cf6;
   font-weight: 500;
+}
+
+/* Agent call chip — shown when a sub-agent (Classifier, Decision, etc.) is invoked */
+.agentCallChip {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #0369a1;
+  background: rgba(14, 165, 233, 0.1);
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  border-radius: var(--radius-full);
+  padding: 2px 9px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* Pipeline progress node — single live node shown during batch processing */
+.pipelineProgressNode {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: rgba(59, 130, 246, 0.05);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: var(--radius-md);
+}
+
+.pipelineProgressHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.pipelineProgressLabel {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-main);
+}
+
+.pipelineProgressPct {
+  font-size: 0.72rem;
+  font-family: monospace;
+  color: var(--text-muted);
+}
+
+.pipelineProgressTrack {
+  height: 3px;
+  background: var(--border);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.pipelineProgressFill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+}
+
+.pipelineProgressCurrent {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Tool result row highlight */
@@ -836,97 +907,100 @@
 
 .thinkingCardTitle {
   font-size: 0.85rem;
-  color: var(--text-main);
-  font-weight: 500;
-  line-height: 1.4;
-}
-
-.thinkingCardSteps {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-left: 20px;
-}
-
-.thinkingCardStep {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  font-size: 0.78rem;
   color: var(--text-muted);
+  font-weight: 400;
   line-height: 1.4;
-  padding: 2px 0;
-}
-
-.thinkingCardStepCheck {
-  color: #22c55e;
-  font-size: 0.72rem;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.thinkingCardStepText {
-  flex: 1;
 }
 
 /* ============================================================
-   Batch Summary Card
+   Batch Milestone Card (replaces old batchSummaryCard)
    ============================================================ */
 
-.batchSummaryCard {
+/* Keep old names as aliases so nothing breaks if referenced elsewhere */
+.batchSummaryCard { display: none; }
+
+.batchMilestoneCard {
   background: var(--bg-surface);
   border: 1px solid var(--border);
+  border-left: 3px solid #22c55e;
   border-radius: var(--radius-lg);
   padding: var(--space-4);
   max-width: 75%;
   box-shadow: var(--shadow-sm);
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.batchSummaryHeader {
-  display: flex;
-  align-items: baseline;
   gap: var(--space-3);
+  position: relative;
 }
 
-.batchSummaryTitle {
+.batchMilestoneIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+  font-size: 1rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.batchMilestoneBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+
+.batchMilestoneTitle {
   font-weight: 600;
   font-size: 0.95rem;
   color: var(--text-main);
 }
 
-.batchSummaryMeta {
-  font-size: 0.75rem;
+.batchMilestoneMeta {
+  font-size: 0.72rem;
   color: var(--text-muted);
   font-family: monospace;
 }
 
-.batchSummaryStats {
+.batchMilestoneStats {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-2);
   flex-wrap: wrap;
+  margin-top: 2px;
 }
 
-.batchStat {
-  font-size: 0.85rem;
+.batchMilestoneStatGreen {
+  font-size: 0.82rem;
   font-weight: 600;
-  padding: 2px 10px;
+  padding: 2px 9px;
   border-radius: var(--radius-full);
-}
-
-.batchStatGreen {
   background: rgba(34, 197, 94, 0.12);
   color: #16a34a;
 }
 
-.batchStatRed {
+.batchMilestoneStatAmber {
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+}
+
+.batchMilestoneStatRed {
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
   background: rgba(239, 68, 68, 0.12);
   color: #dc2626;
 }
 
-.batchExpandToggle {
+.batchMilestoneToggle {
   background: none;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -936,11 +1010,30 @@
   cursor: pointer;
   width: fit-content;
   transition: border-color 0.15s, color 0.15s;
+  margin-top: var(--space-1);
 }
 
-.batchExpandToggle:hover {
+.batchMilestoneToggle:hover {
   border-color: var(--primary);
   color: var(--primary);
+}
+
+.batchMilestoneViewLog {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--primary);
+  cursor: pointer;
+  text-align: left;
+  margin-top: var(--space-2);
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+
+.batchMilestoneViewLog:hover {
+  opacity: 1;
+  text-decoration: underline;
 }
 
 .batchMemberList {
@@ -975,4 +1068,24 @@
   font-family: monospace;
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+/* Legacy stat classes — kept for backward compat with old persisted messages */
+.batchStat {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+}
+.batchStatGreen { background: rgba(34, 197, 94, 0.12); color: #16a34a; }
+.batchStatRed   { background: rgba(239, 68, 68, 0.12); color: #dc2626; }
+.batchExpandToggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  width: fit-content;
 }

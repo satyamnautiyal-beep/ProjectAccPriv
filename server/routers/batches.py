@@ -180,7 +180,12 @@ async def initiate_batch(req: BatchRequest):
 
 @router.post("/batches/stream/{batch_id}")
 async def stream_batch_enrollment(batch_id: str):
-    from server.ai.chat_agent import _run_batch_streaming
+    """
+    Streaming enrollment endpoint for Release Staging.
+    Processes each member individually, emits SSE events in real time,
+    and persists the full enrollment log to MongoDB for later replay.
+    """
+    from server.ai.chat_agent import _run_batch_streaming, _extract_member_name
 
     db = get_database()
     if db is None:
@@ -204,15 +209,14 @@ async def stream_batch_enrollment(batch_id: str):
         return f"data: {json.dumps(payload)}\n\n"
 
     async def event_stream():
+        # Accumulated log for persistence
         log_entries = []
 
         start_event = {
             "type": "start",
             "batchId": batch_id,
             "memberCount": len(members_in_batch),
-        }
-        log_entries.append(start_event)
-        yield send(start_event)
+        })
         yield ": \n\n"
 
         queue: asyncio.Queue = asyncio.Queue()
@@ -225,32 +229,29 @@ async def stream_batch_enrollment(batch_id: str):
             event = await queue.get()
             if event is None:
                 break
-
             log_entries.append(event)
             yield send(event)
             yield ": \n\n"
-
             if event.get("type") == "member_result":
                 if event.get("status") == "Processing Failed":
                     failed += 1
                 else:
                     processed += 1
 
-        done_event = {
+        yield send({
             "type": "done",
             "batchId": batch_id,
             "processed": processed,
             "failed": failed,
-        }
-        log_entries.append(done_event)
-        yield send(done_event)
+        })
         yield ": \n\n"
 
-        # ✅ BigQuery (not Mongo)
-        db.batches.update_one(
-            {"id": batch_id},
-            {"$set": {"enrollmentLog": log_entries}}
-        )
+        # Persist the full log to MongoDB so it can be replayed later
+        if db is not None:
+            db.batches.update_one(
+                {"id": batch_id},
+                {"$set": {"enrollmentLog": log_entries}}
+            )
 
     return StreamingResponse(
         event_stream(),
@@ -265,6 +266,7 @@ async def stream_batch_enrollment(batch_id: str):
 
 @router.get("/batches/log/{batch_id}")
 def get_batch_log(batch_id: str):
+    """Returns the persisted enrollment log for a completed batch."""
     db = get_database()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection failed")

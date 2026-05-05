@@ -1,26 +1,43 @@
+"""
+Backward-compatibility shim.
+All real logic lives in the modular sub-packages.
+Existing imports (server.routers.*, etc.) continue to work unchanged.
+"""
 import asyncio
-import copy
-import hashlib
-import json
-import os
-from datetime import datetime, timezone, date
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
 
-from dotenv import load_dotenv
-from air import AsyncAIRefinery
+# Core
+from .core.client import create_client, PROJECT_NAME          # noqa: F401
+from .core.distiller import (                                  # noqa: F401
+    process_record,
+    process_records_batch,
+    mongo_update,
+)
+from .core.utils import _utc_now_z                            # noqa: F401
 
-try:
-    from .email_agent import draft_email, send_email
-except ImportError:
-    from email_agent import draft_email, send_email
+# Data layer
+from .data.sanitizer import build_engine_input                # noqa: F401
+from .data.views import (                                      # noqa: F401
+    classification_view  as _classification_view,
+    sep_inference_view   as _sep_inference_view,
+    normal_flow_view     as _normal_flow_view,
+    decision_view        as _decision_view,
+)
+
+# Agents
+from .agents import get_executor_dict                         # noqa: F401
+from .agents.classifier       import EnrollmentClassifierAgent  # noqa: F401
+from .agents.sep_inference    import SepInferenceAgent          # noqa: F401
+from .agents.normal_enrollment import NormalEnrollmentAgent     # noqa: F401
+from .agents.decision         import DecisionAgent              # noqa: F401
+from .agents.evidence_check   import EvidenceCheckAgent         # noqa: F401
+from .agents.router           import EnrollmentRouterAgent      # noqa: F401
+
+# executor_dict as a plain dict (legacy callers expect a dict, not a callable)
+executor_dict = get_executor_dict()
 
 
-def orchestrate_enrollment(record: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Sync wrapper for process_record. Used by FastAPI router endpoints.
-    Sanitizes input, runs EnrollmentRouterAgent via Distiller, returns analysis.
-    """
+def orchestrate_enrollment(record: dict) -> dict:
+    """Sync wrapper for process_record. Used by FastAPI router endpoints."""
     return asyncio.run(process_record(record, persist=False))
 
 
@@ -33,9 +50,14 @@ PROJECT_NAME = "enrollment_intelligence"
 CONFIG_PATH = (Path(__file__).resolve().parent / "config.yaml").resolve()
 _HASH_CACHE = Path(__file__).resolve().parent / ".enrollment_intelligence_project_version"
 
-# Evidence config
+# Evidence config (NEW)
 SEP_REQUIRED_DOCS_PATH = (Path(__file__).resolve().parent / "sep_required_docs.json").resolve()
 MOCK_SUBMITTED_DOCS_PATH = (Path(__file__).resolve().parent / "mock_submitted_docs.json").resolve()
+
+# Mongo (optional - used only if persist=True in process_record/process_records_batch)
+MONGO_URI = os.getenv("MONGO_URI", "")
+MONGO_DB = os.getenv("MONGO_DB_NAME", "health_enroll")
+MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "members")
 
 DEFAULT_ENROLLMENT_SOURCE = os.getenv("DEFAULT_ENROLLMENT_SOURCE", "Employer")
 
@@ -282,24 +304,17 @@ def _decision_view(record: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # -----------------------------------
-# BQ PERSIST (optional — used when persist=True in process_record)
+# MONGO PERSIST (optional)
 # -----------------------------------
-def bq_update(subscriber_id: str, root_status: str, agent_analysis: Dict[str, Any], markers: Optional[Dict[str, Any]] = None) -> None:
-    """
-    Persists agent results to BigQuery.
-    """
-    from db.bq_connection import get_database
-    db = get_database()
-    if db is None:
+def mongo_update(subscriber_id: str, root_status: str, agent_analysis: Dict[str, Any], markers: Optional[Dict[str, Any]] = None) -> None:
+    if not MONGO_URI:
         return
-    db.members.update_one(
+    from pymongo import MongoClient
+    client = MongoClient(MONGO_URI)
+    col = client[MONGO_DB][MONGO_COLLECTION]
+    col.update_one(
         {"subscriber_id": subscriber_id},
-        {"$set": {
-            "status":         root_status,
-            "agent_analysis": agent_analysis,
-            "markers":        markers or {},
-            "updated_at":     _utc_now_z(),
-        }},
+        {"$set": {"status": root_status, "agent_analysis": agent_analysis, "markers": markers or {}, "updated_at": _utc_now_z()}},
         upsert=False,
     )
 
@@ -972,7 +987,7 @@ async def process_record(record: Dict[str, Any], persist: bool = False) -> Dict[
     result = json.loads(final_text)
 
     if persist and result.get("subscriber_id"):
-        bq_update(
+        mongo_update(
             subscriber_id=result["subscriber_id"],
             root_status=result.get("root_status_recommended", "In Review"),
             agent_analysis=result.get("agent_analysis", {}),
@@ -1025,7 +1040,7 @@ async def process_records_batch(
                 parsed = json.loads(final_text)
 
                 if persist and parsed.get("subscriber_id"):
-                    bq_update(
+                    mongo_update(
                         subscriber_id=parsed["subscriber_id"],
                         root_status=parsed.get("root_status_recommended", "In Review"),
                         agent_analysis=parsed.get("agent_analysis", {}),
@@ -1052,7 +1067,9 @@ async def process_records_batch(
 # CLI (optional)
 # -----------------------------------
 if __name__ == "__main__":
+    import json
     import sys
+
     record = json.loads(sys.stdin.read())
     out = asyncio.run(process_record(record, persist=False))
     print(json.dumps(out, indent=2))
