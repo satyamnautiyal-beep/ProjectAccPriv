@@ -21,7 +21,6 @@ from ..agents.sep_inference import SepInferenceAgent
 from ..agents.normal_enrollment import NormalEnrollmentAgent
 from ..agents.decision import DecisionAgent
 from ..agents.evidence_check import EvidenceCheckAgent
-from ..core.utils import _utc_now_z
 
 
 def _extract_member_name(member_doc: dict) -> str:
@@ -41,8 +40,7 @@ async def run_batch_in_background(batch_id: str, members: List[Dict[str, Any]]) 
     from ..chat.batch_jobs import _batch_jobs
     from db.bq_connection import get_database
 
-    _batch_jobs[batch_id] = {"status": "running", "startedAt": _dt.now(_tz.utc).isoformat()}
-    db = get_database()
+    _batch_jobs[batch_id] = {"status": "running", "startedAt": _dt.now(_tz.utc).isoformat()}    db = get_database()
 
     try:
         results = await process_records_batch(members, persist=False)

@@ -3,10 +3,10 @@ Distiller session management — single-record and batch processing entry points
 """
 import json
 import os
+from datetime import datetime as _dt, timezone as _tz
 from typing import Any, Dict, List, Optional, Tuple
 
 from .client import create_client, PROJECT_NAME
-from .utils import _utc_now_z
 from ..data.sanitizer import build_engine_input
 
 # ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ def _bq_update(
             "status":         root_status,
             "agent_analysis": agent_analysis,
             "markers":        markers or {},
-            "updated_at":     _utc_now_z(),
+            "updated_at":     _dt.now(_tz.utc),
         }},
         upsert=False,
     )

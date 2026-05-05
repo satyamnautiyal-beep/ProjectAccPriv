@@ -4,6 +4,7 @@ All real logic lives in the modular sub-packages under server/ai/.
 Existing imports (server.routers.*, etc.) continue to work unchanged.
 """
 import asyncio
+from datetime import datetime as _dt, timezone as _tz
 
 # Core
 from .core.client import create_client, PROJECT_NAME          # noqa: F401
@@ -36,5 +37,10 @@ executor_dict = get_executor_dict()
 
 
 def orchestrate_enrollment(record: dict) -> dict:
-    """Sync wrapper for process_record. Used by FastAPI router endpoints."""
-    return asyncio.run(process_record(record, persist=False))
+    """
+    Sync wrapper for process_record. Used by FastAPI router endpoints.
+    Uses get_event_loop().run_until_complete() to avoid asyncio.run() conflicts
+    when called from within an already-running event loop context.
+    """
+    loop = asyncio.get_event_loop()
+    return loop.run_until_complete(process_record(record, persist=False))

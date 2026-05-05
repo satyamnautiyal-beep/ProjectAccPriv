@@ -4,6 +4,7 @@ Returns JSON only.
 """
 import json
 import os
+from datetime import datetime as _dt, timezone as _tz
 
 from .base import register_agent
 from .classifier import EnrollmentClassifierAgent
@@ -11,7 +12,7 @@ from .sep_inference import SepInferenceAgent
 from .normal_enrollment import NormalEnrollmentAgent
 from .decision import DecisionAgent
 from .evidence_check import EvidenceCheckAgent
-from ..core.utils import _get_latest_two_snapshots, _utc_now_z
+from ..core.utils import _get_latest_two_snapshots
 from ..data.sanitizer import build_engine_input
 from ..data.views import classification_view, sep_inference_view, normal_flow_view, decision_view
 
@@ -172,7 +173,7 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
         last_evidence_check_at = None
 
         if is_sep_confirmed and requires_evidence:
-            last_evidence_check_at = _utc_now_z()
+            last_evidence_check_at = _dt.now(_tz.utc).isoformat()
             if not sep_type_marker:
                 evidence_status = "unmapped"
             elif evidence_check and evidence_check.get("required_docs") == [] and evidence_check.get("missing_docs"):
@@ -189,7 +190,7 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
             "sep_confidence": sep_conf_marker,
             "evidence_status": evidence_status,
             "last_evidence_check_at": last_evidence_check_at,
-            "received_at": full_record.get("received_at") or _utc_now_z(),
+            "received_at": full_record.get("received_at") or _dt.now(_tz.utc).isoformat(),
             "enrollment_path": "SEP" if is_sep_confirmed else "OEP",
             "is_within_oep": classification.get("is_within_oep"),
         }

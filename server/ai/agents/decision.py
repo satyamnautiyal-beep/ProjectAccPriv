@@ -4,10 +4,11 @@ to produce a final operational status recommendation.
 Returns JSON only.
 """
 import json
+from datetime import datetime as _dt, timezone as _tz
 from typing import List
 
 from .base import register_agent
-from ..core.utils import _get_latest_two_snapshots, _utc_now_z
+from ..core.utils import _get_latest_two_snapshots
 
 
 @register_agent("DecisionAgent")
@@ -88,7 +89,7 @@ async def DecisionAgent(query: str, **kwargs) -> str:
         "root_status_recommended": root_status_recommended,
         "plain_english_summary": plain_english_summary,
         "agent_analysis_patch": {
-            "generated_at": _utc_now_z(),
+            "generated_at": _dt.now(_tz.utc).isoformat(),
             "latest_snapshot_date": dates[-1] if dates else None,
             "latest_snapshot_status": latest_snapshot_status,
             "risk": risk,
