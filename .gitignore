@@ -9,7 +9,7 @@ env/
 *.sqlite3
 
 # --- Data & Workdirs ---
-data/
+/data/
 parsed_data/
 
 # --- Synthetic / Test Data ---
