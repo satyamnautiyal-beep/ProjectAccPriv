@@ -40,7 +40,8 @@ async def run_batch_in_background(batch_id: str, members: List[Dict[str, Any]]) 
     from ..chat.batch_jobs import _batch_jobs
     from db.bq_connection import get_database
 
-    _batch_jobs[batch_id] = {"status": "running", "startedAt": _dt.now(_tz.utc).isoformat()}    db = get_database()
+    _batch_jobs[batch_id] = {"status": "running", "startedAt": _dt.now(_tz.utc).isoformat()}
+    db = get_database()
 
     try:
         results = await process_records_batch(members, persist=False)
