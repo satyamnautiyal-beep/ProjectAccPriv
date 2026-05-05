@@ -3,7 +3,6 @@ Backward-compatibility shim.
 All real logic lives in the modular sub-packages under server/ai/.
 Existing imports (server.routers.*, etc.) continue to work unchanged.
 """
-import asyncio
 from datetime import datetime as _dt, timezone as _tz
 
 # Core
@@ -36,11 +35,11 @@ from .agents.router            import EnrollmentRouterAgent       # noqa: F401
 executor_dict = get_executor_dict()
 
 
-def orchestrate_enrollment(record: dict) -> dict:
+async def orchestrate_enrollment(record: dict) -> dict:
     """
-    Sync wrapper for process_record. Used by FastAPI router endpoints.
-    Uses get_event_loop().run_until_complete() to avoid asyncio.run() conflicts
-    when called from within an already-running event loop context.
+    Async wrapper for process_record. Used by FastAPI router endpoints.
+    
+    Note: This function is now async. All callers must use 'await' and be async functions.
+    The deprecated get_event_loop() pattern has been removed for Python 3.10+ compatibility.
     """
-    loop = asyncio.get_event_loop()
-    return loop.run_until_complete(process_record(record, persist=False))
+    return await process_record(record, persist=False)

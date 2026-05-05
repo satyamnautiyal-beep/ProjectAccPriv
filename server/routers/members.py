@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import List
 from db.bq_connection import get_database
 from server.business_logic import validate_member_record
-from server.ai.agent import orchestrate_enrollment
+from server.ai.core.distiller import process_record
 from server.routers.files import get_statuses
 from server.ai.chat_agent import stream_chat_response
 
@@ -64,7 +64,7 @@ def parse_members():
 
 
 @router.get("/agent/process/{subscriber_id}")
-def process_member_agent(subscriber_id: str):
+async def process_member_agent(subscriber_id: str):
     """Triggers AI Refinery pipeline for a single member (Ready or In Batch)."""
     db = get_database()
     if db is None:
@@ -80,7 +80,7 @@ def process_member_agent(subscriber_id: str):
             detail=f"Member not eligible for agent processing (status={member.get('status')})",
         )
 
-    result = orchestrate_enrollment(member)
+    result = await process_record(member, persist=False)
     root_status = result.get("root_status_recommended", "In Review")
 
     db.members.update_one(

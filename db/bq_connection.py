@@ -96,6 +96,25 @@ def get_database() -> Optional["BQDatabase"]:
 # ---------------------------------------------------------------------------
 # Document packing / unpacking
 # ---------------------------------------------------------------------------
+
+def _make_json_safe(obj):
+    """
+    Recursively converts any datetime objects to ISO-format strings so the
+    document can be safely serialized to JSON by the BigQuery client.
+    
+    The BQ Python client uses json.dumps internally for the `data` JSON column,
+    which raises TypeError on datetime objects. This normalises the entire
+    document tree before it reaches the BQ client.
+    """
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _make_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_make_json_safe(i) for i in obj]
+    return obj
+
+
 def _pack_row(doc: dict) -> dict:
     """
     Converts a full member/batch document into a BQ row dict.
@@ -112,14 +131,18 @@ def _pack_row(doc: dict) -> dict:
         if key in _INTERNAL_FIELDS or key == "_id":
             continue
         if key in FLAT_FIELDS:
-            flat[key] = value
+            # Normalise datetime flat columns to ISO strings for BQ compatibility
+            flat[key] = value.isoformat() if isinstance(value, datetime) else value
         else:
             nested[key] = value
 
-    # data column — native Python dict, NOT json.dumps.
-    # The google-cloud-bigquery client handles JSON serialisation internally.
-    flat["data"]        = nested
-    flat["ingested_at"] = datetime.now(timezone.utc)
+    # The `data` column is type JSON in BigQuery.
+    # insert_rows_json requires JSON columns to be passed as a serialized string,
+    # not a raw Python dict — the BQ client does NOT auto-serialize nested dicts
+    # for JSON-typed columns.
+    flat["data"]        = json.dumps(_make_json_safe(nested))
+    # ingested_at must be an ISO string — json.dumps cannot handle datetime objects.
+    flat["ingested_at"] = datetime.now(timezone.utc).isoformat()
 
     return flat
 
@@ -438,14 +461,35 @@ class BQCollection:
         update_dict: dict,
     ) -> None:
         """
-        Applies update_one() to every document matching filter_dict.
-        Used for bulk status changes (e.g. marking all Ready members as In Batch).
+        Applies $set fields to every document matching filter_dict, then
+        inserts all merged documents in a single batched insert_rows_json call.
+
+        This replaces the previous O(n) loop of individual update_one() calls
+        (each of which did a find_one + insert_one = 2 BQ round trips per doc).
+        Now it does: 1 find() + 1 insert_rows_json() regardless of batch size.
         """
         docs = self.find(filter_dict)
+        if not docs:
+            return
+
+        set_fields = update_dict.get("$set", {})
+        rows_to_insert = []
         for doc in docs:
             pk_val = doc.get(self._pk)
-            if pk_val:
-                self.update_one({self._pk: pk_val}, update_dict)
+            if not pk_val:
+                continue
+            merged = _apply_dot_notation(doc, set_fields)
+            rows_to_insert.append(_pack_row(merged))
+
+        if not rows_to_insert:
+            return
+
+        # Single batched insert — one BQ API call for the entire set
+        errors = self._client.insert_rows_json(self._insert_ref, rows_to_insert)
+        if errors:
+            raise RuntimeError(
+                f"[BQ] update_many() batch insert error on '{self._table}': {errors}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +505,8 @@ def save_member_to_bq(member_data: dict) -> Optional[str]:
     - Inserts a new row (append-only)
 
     Drop-in replacement for mongo_connection.save_member_to_mongo().
+    For bulk ingestion of many members from a single EDI file, prefer
+    save_members_to_bq_bulk() to avoid N individual BQ round trips.
     """
     db = get_database()
     if db is None:
@@ -499,5 +545,84 @@ def save_member_to_bq(member_data: dict) -> Optional[str]:
 
     db.members.insert_one(new_doc)
     return sub_id
+
+
+def save_members_to_bq_bulk(members_data: List[dict]) -> List[str]:
+    """
+    Bulk variant of save_member_to_bq — saves multiple members in two BQ calls:
+      1. One find() to fetch all existing records for the subscriber IDs in the batch.
+      2. One insert_rows_json() to write all merged documents at once.
+
+    Use this when ingesting members from a single EDI file to avoid N individual
+    round trips (which would be 2 × N BQ API calls for N members).
+
+    Returns a list of successfully saved subscriber_ids.
+    """
+    db = get_database()
+    if db is None:
+        print("[BQ] save_members_to_bq_bulk(): database unavailable.")
+        return []
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Resolve subscriber IDs and skip members without one
+    valid_members: List[dict] = []
+    sub_ids: List[str] = []
+    for member_data in members_data:
+        sub_id = (
+            member_data.get("subscriber_id")
+            or (member_data.get("member_info") or {}).get("subscriber_id")
+        )
+        if not sub_id:
+            print("[BQ] save_members_to_bq_bulk(): skipping member with no subscriber_id.")
+            continue
+        valid_members.append(member_data)
+        sub_ids.append(sub_id)
+
+    if not valid_members:
+        return []
+
+    # Fetch all existing records in one query
+    existing_map: Dict[str, dict] = {}
+    if sub_ids:
+        existing_docs = db.members.find({"subscriber_id": {"$in": sub_ids}})
+        for doc in existing_docs:
+            existing_map[doc["subscriber_id"]] = doc
+
+    # Build merged rows
+    rows_to_insert = []
+    saved_ids: List[str] = []
+
+    for member_data, sub_id in zip(valid_members, sub_ids):
+        existing = existing_map.get(sub_id) or {}
+        history  = existing.get("history") or {}
+        if isinstance(history, str):
+            try:
+                history = json.loads(history)
+            except Exception:
+                history = {}
+
+        history[today_str] = member_data
+
+        new_doc = {
+            **existing,
+            "subscriber_id": sub_id,
+            "status":        member_data.get("status", "Pending Business Validation"),
+            "latest_update": today_str,
+            "history":       history,
+        }
+
+        rows_to_insert.append(_pack_row(new_doc))
+        saved_ids.append(sub_id)
+
+    if not rows_to_insert:
+        return []
+
+    # Single batched insert
+    errors = db.members._client.insert_rows_json(db.members._insert_ref, rows_to_insert)
+    if errors:
+        raise RuntimeError(f"[BQ] save_members_to_bq_bulk() insert error: {errors}")
+
+    return saved_ids
 
 

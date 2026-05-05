@@ -4,7 +4,7 @@ import time
 import json
 import random
 from datetime import datetime
-from db.bq_connection import save_member_to_bq
+from db.bq_connection import save_members_to_bq_bulk
 from parser import parse_edi
 from server.edi_validator import check_edi_structure
 
@@ -104,18 +104,26 @@ def check_structure():
                 with open(filepath, 'r') as f:
                     edi_text = f.read()
                 parsed_data = parse_edi(edi_text)
-                
-                members_saved = 0
+
+                # Collect all members from all transactions first
+                members_to_save = []
                 for transaction in parsed_data.get("transactions", []):
                     for m_data in transaction.get("members", []):
                         info = m_data.get("member_info", {})
                         sub_id = info.get("subscriber_id") or f"MEM-{os.urandom(4).hex()}"
                         m_data["subscriber_id"] = sub_id
                         m_data["status"] = "Pending Business Validation"
-                        saved = save_member_to_bq(m_data)
-                        if saved is None:
-                            raise Exception("BigQuery unavailable — check GCP_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS in .env")
-                        members_saved += 1
+                        members_to_save.append(m_data)
+
+                if members_to_save:
+                    # Bulk save — one BQ query + one insert for the whole file
+                    saved_ids = save_members_to_bq_bulk(members_to_save)
+                    if len(saved_ids) != len(members_to_save):
+                        raise Exception(
+                            f"BigQuery bulk save incomplete — "
+                            f"expected {len(members_to_save)}, saved {len(saved_ids)}. "
+                            "Check GCP_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS in .env"
+                        )
 
                 # Only delete the file AFTER all members are confirmed saved to BQ
                 os.remove(filepath)

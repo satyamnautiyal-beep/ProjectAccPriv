@@ -9,7 +9,7 @@
       "member_info": {
         "subscriber_indicator": "Y",
         "relationship_code": "18",
-        "employment_status": "030",
+        "maintenance_type": "030",
         "subscriber_id": "EMPTEST0010",
         "first_name": "Aditya",
         "last_name": "Singh",
@@ -37,7 +37,7 @@
       "member_info": {
         "subscriber_indicator": "Y",
         "relationship_code": "18",
-        "employment_status": "030",
+        "maintenance_type": "030",
         "subscriber_id": "EMPTEST0010",
         "first_name": "Aditya",
         "last_name": "Singh",

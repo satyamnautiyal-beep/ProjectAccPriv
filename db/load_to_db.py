@@ -1,3 +1,14 @@
+"""
+LEGACY — MySQL loader for the old relational schema.
+
+This file is kept for historical reference only. The project now uses BigQuery
+(see db/bq_connection.py). Running this script requires a MySQL server and the
+DB_HOST / DB_USER / DB_PASSWORD / DB_NAME environment variables to be set.
+
+Field name fix applied: parser.py was updated to output 'maintenance_type'
+(the correct EDI 834 INS03 field name) instead of the old 'employment_status'.
+This file has been updated to match.
+"""
 import mysql.connector
 import json
 import glob
@@ -5,6 +16,7 @@ import os
 
 from dotenv import load_dotenv
 load_dotenv()
+
 
 def insert_json_to_db(conn, json_data):
     cursor = conn.cursor()
@@ -51,6 +63,12 @@ def insert_json_to_db(conn, json_data):
         for member in txn["members"]:
             info = member["member_info"]
 
+            # 'maintenance_type' is the correct field name (EDI 834 INS03).
+            # The old name 'employment_status' was a misnomer and has been
+            # corrected in parser.py. We fall back gracefully for any legacy
+            # JSON files that still use the old key.
+            maintenance_type = info.get("maintenance_type") or info.get("employment_status")
+
             cursor.execute("""
             INSERT INTO members (
                 transaction_id, subscriber_id, first_name, last_name,
@@ -70,7 +88,7 @@ def insert_json_to_db(conn, json_data):
                 info["insurer_name"],
                 info["insurer_id"],
                 info["relationship_code"],
-                info["employment_status"]
+                maintenance_type,
             ))
 
             member_id = cursor.lastrowid
@@ -102,9 +120,9 @@ def process_json_files():
         return
 
     # Find the newest date folder
-    subdirs = [d for d in os.listdir(parsed_base) 
+    subdirs = [d for d in os.listdir(parsed_base)
                if os.path.isdir(os.path.join(parsed_base, d))]
-    
+
     import re
     date_folders = [d for d in subdirs if re.match(r"^\d{4}-\d{2}-\d{2}$", d)]
 
@@ -112,7 +130,7 @@ def process_json_files():
         print("No processed date folders found in parsed_data/.")
         return
 
-    # Sort descending to natively get the most recent date string
+    # Sort descending to get the most recent date
     date_folders.sort(reverse=True)
     latest_folder_name = date_folders[0]
     latest_folder = os.path.join(parsed_base, latest_folder_name)
@@ -144,7 +162,6 @@ def process_json_files():
                 print(f"Skipping invalid JSON file: {file}")
                 continue
 
-        #print(f"Inserting: {file}")
         insert_json_to_db(conn, json_data)
 
     conn.close()
@@ -153,5 +170,3 @@ def process_json_files():
 
 if __name__ == "__main__":
     process_json_files()
-
-
