@@ -216,7 +216,9 @@ async def stream_batch_enrollment(batch_id: str):
             "type": "start",
             "batchId": batch_id,
             "memberCount": len(members_in_batch),
-        })
+        }
+        log_entries.append(start_event)
+        yield send(start_event)
         yield ": \n\n"
 
         queue: asyncio.Queue = asyncio.Queue()
@@ -246,7 +248,7 @@ async def stream_batch_enrollment(batch_id: str):
         })
         yield ": \n\n"
 
-        # Persist the full log to MongoDB so it can be replayed later
+        # Persist the full log to BigQuery so it can be replayed later
         if db is not None:
             db.batches.update_one(
                 {"id": batch_id},
