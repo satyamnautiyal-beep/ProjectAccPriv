@@ -7,8 +7,9 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell,
   Tooltip as RechartsTooltip, Legend, LabelList,
 } from 'recharts';
-import { Files, Users, AlertTriangle, CheckCircle, Activity, ShieldCheck } from 'lucide-react';
+import { Files, Users, AlertTriangle, CheckCircle, Activity, ShieldCheck, TrendingUp, Clock, DollarSign } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
 
 // ---------------------------------------------------------------------------
 // Colour palette — one distinct colour per member status
@@ -102,6 +103,57 @@ const PieLegend = ({ data }) => (
 );
 
 // ---------------------------------------------------------------------------
+// Priority badge component
+// ---------------------------------------------------------------------------
+const PriorityBadge = ({ priority }) => {
+  const colors = {
+    HIGH: { bg: '#fee2e2', text: '#dc2626' },
+    MEDIUM: { bg: '#fef3c7', text: '#d97706' },
+    LOW: { bg: '#dbeafe', text: '#2563eb' },
+  };
+  const color = colors[priority] || colors.LOW;
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '4px 8px',
+      borderRadius: '4px',
+      fontSize: '0.75rem',
+      fontWeight: 600,
+      backgroundColor: color.bg,
+      color: color.text,
+    }}>
+      {priority}
+    </span>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Status badge component
+// ---------------------------------------------------------------------------
+const StatusBadge = ({ status }) => {
+  const colors = {
+    AWAITING_SPECIALIST: { bg: '#fef3c7', text: '#d97706' },
+    IN_PROGRESS: { bg: '#dbeafe', text: '#2563eb' },
+    COMPLETED: { bg: '#dcfce7', text: '#16a34a' },
+    FAILED: { bg: '#fee2e2', text: '#dc2626' },
+  };
+  const color = colors[status] || colors.AWAITING_SPECIALIST;
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '4px 8px',
+      borderRadius: '4px',
+      fontSize: '0.75rem',
+      fontWeight: 600,
+      backgroundColor: color.bg,
+      color: color.text,
+    }}>
+      {status.replace(/_/g, ' ')}
+    </span>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Dashboard page
 // ---------------------------------------------------------------------------
 export default function DashboardPage() {
@@ -109,6 +161,18 @@ export default function DashboardPage() {
     queryKey: ['metrics'],
     queryFn: () => fetch('/api/metrics').then(res => res.json()),
     refetchInterval: 2000,
+  });
+
+  const { data: renewalAlerts, isLoading: renewalLoading } = useQuery({
+    queryKey: ['renewalAlerts'],
+    queryFn: () => fetch('/api/renewals/alerts').then(res => res.json()).catch(() => ({ alerts: [] })),
+    refetchInterval: 5000,
+  });
+
+  const { data: retroCases, isLoading: retroLoading } = useQuery({
+    queryKey: ['retroCases'],
+    queryFn: () => fetch('/api/retro').then(res => res.json()).catch(() => ({ cases: [] })),
+    refetchInterval: 5000,
   });
 
   if (isLoading || !data) {
@@ -327,6 +391,133 @@ export default function DashboardPage() {
         </Annotation>
 
       </div>
+
+      {/* Renewal Alerts Section */}
+      <Annotation
+        title="Premium Change Alerts"
+        what="Real-time list of renewal 834 premium change alerts requiring specialist review."
+        why="Allows specialists to quickly identify and act on significant premium changes."
+        how="Sorted by priority (HIGH first), showing member name, delta, and current status."
+      >
+        <div className={styles.sectionCard}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>
+              <TrendingUp size={18} style={{ marginRight: 8, display: 'inline' }} />
+              Premium Change Alerts
+            </h2>
+            <Link href="/renewals" style={{ color: 'var(--primary)', fontSize: '0.85rem', fontWeight: 500, textDecoration: 'none' }}>
+              View All →
+            </Link>
+          </div>
+          <div style={{ padding: 'var(--space-4) var(--space-5)', flex: 1 }}>
+            {renewalLoading ? (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Loading alerts...</p>
+            ) : renewalAlerts?.alerts && renewalAlerts.alerts.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                {renewalAlerts.alerts.slice(0, 5).map((alert) => (
+                  <div key={alert.case_id} style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: 'var(--space-3)',
+                    backgroundColor: 'var(--bg-root)',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border)',
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: 4 }}>
+                        {alert.member_name}
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                        <DollarSign size={14} style={{ display: 'inline', marginRight: 4 }} />
+                        Delta: ${Math.abs(alert.premium_delta).toFixed(2)} {alert.premium_delta > 0 ? '↑' : '↓'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+                      <PriorityBadge priority={alert.priority} />
+                      <StatusBadge status={alert.status} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No premium change alerts yet.</p>
+            )}
+          </div>
+        </div>
+      </Annotation>
+
+      {/* Retro Enrollment Cases Section */}
+      <Annotation
+        title="Retroactive Enrollment Cases"
+        what="Real-time list of retroactive enrollment cases in progress with workflow status."
+        why="Allows specialists to track retroactive enrollments and monitor 48-hour deadlines."
+        how="Sorted by deadline, showing member name, effective date, current step, and deadline status."
+      >
+        <div className={styles.sectionCard}>
+          <div className={styles.cardHeader}>
+            <h2 className={styles.cardTitle}>
+              <Clock size={18} style={{ marginRight: 8, display: 'inline' }} />
+              Retroactive Enrollment Cases
+            </h2>
+            <Link href="/retro-enrollments" style={{ color: 'var(--primary)', fontSize: '0.85rem', fontWeight: 500, textDecoration: 'none' }}>
+              View All →
+            </Link>
+          </div>
+          <div style={{ padding: 'var(--space-4) var(--space-5)', flex: 1 }}>
+            {retroLoading ? (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Loading cases...</p>
+            ) : retroCases?.cases && retroCases.cases.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                {retroCases.cases.slice(0, 5).map((caseItem) => {
+                  const deadline = new Date(caseItem.deadline);
+                  const now = new Date();
+                  const hoursRemaining = Math.round((deadline - now) / (1000 * 60 * 60));
+                  const isUrgent = hoursRemaining < 12 && hoursRemaining > 0;
+                  
+                  return (
+                    <div key={caseItem.case_id} style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: 'var(--space-3)',
+                      backgroundColor: isUrgent ? 'rgba(239, 68, 68, 0.05)' : 'var(--bg-root)',
+                      borderRadius: 'var(--radius-md)',
+                      border: isUrgent ? '1px solid #fca5a5' : '1px solid var(--border)',
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: 4 }}>
+                          {caseItem.member_name}
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                          <span>Effective: {caseItem.retro_effective_date}</span>
+                          <span style={{ margin: '0 8px' }}>•</span>
+                          <span>Step: {caseItem.current_step.replace(/_/g, ' ')}</span>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+                        <div style={{
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                          color: isUrgent ? '#dc2626' : 'var(--text-muted)',
+                          backgroundColor: isUrgent ? '#fee2e2' : 'var(--bg-root)',
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                        }}>
+                          {hoursRemaining > 0 ? `${hoursRemaining}h left` : 'Expired'}
+                        </div>
+                        <StatusBadge status={caseItem.status} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No retroactive enrollment cases yet.</p>
+            )}
+          </div>
+        </div>
+      </Annotation>
     </div>
   );
 }

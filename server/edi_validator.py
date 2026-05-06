@@ -1,4 +1,120 @@
 import os
+import json
+from typing import Dict, Any
+from server.ai.agents.base import register_agent
+
+# ===================== STRUCTURE VALIDATOR AGENT =====================
+# Validates EDI file structure and format
+# Part of the unified intake pipeline (Stage 2)
+
+
+@register_agent("StructureValidator")
+async def StructureValidator(query: str) -> str:
+    """
+    Validates file structure and format.
+    Wraps existing check_edi_structure() function.
+    
+    Input:
+    {
+        "file_content": "ISA*00*...",
+        "file_type": "edi_834",
+        "file_name": "renewal_834.edi"
+    }
+    
+    Output:
+    {
+        "success": true,
+        "file_type": "edi_834",
+        "parsed_structure": {...}
+    }
+    """
+    try:
+        payload = json.loads(query)
+        file_content = payload.get("file_content", "")
+        file_type = payload.get("file_type", "edi_834")
+        file_name = payload.get("file_name", "")
+        
+        # Validate EDI 834 files
+        if file_type == "edi_834":
+            # Use existing EDI validator
+            validation_result = check_edi_structure(file_content)
+            
+            if validation_result != "Healthy":
+                return json.dumps({
+                    "success": False,
+                    "error": validation_result,
+                    "file_type": file_type,
+                    "file_name": file_name
+                })
+            
+            # Parse using existing parser
+            from parser import parse_edi
+            parsed = parse_edi(file_content)
+            
+            return json.dumps({
+                "success": True,
+                "file_type": file_type,
+                "file_name": file_name,
+                "parsed_structure": parsed
+            })
+        
+        # Add support for retro request validation
+        elif file_type == "retro_request":
+            # Validate retro request structure
+            if not file_content or not isinstance(file_content, (str, dict)):
+                return json.dumps({
+                    "success": False,
+                    "error": "Invalid retro request format"
+                })
+            
+            # If it's a JSON string, parse it
+            if isinstance(file_content, str):
+                try:
+                    parsed = json.loads(file_content)
+                except json.JSONDecodeError:
+                    return json.dumps({
+                        "success": False,
+                        "error": "Invalid JSON format for retro request"
+                    })
+            else:
+                parsed = file_content
+            
+            # Validate required fields
+            required_fields = ["member_id", "retro_effective_date", "auth_source"]
+            missing_fields = [f for f in required_fields if f not in parsed]
+            
+            if missing_fields:
+                return json.dumps({
+                    "success": False,
+                    "error": f"Missing required fields: {', '.join(missing_fields)}"
+                })
+            
+            return json.dumps({
+                "success": True,
+                "file_type": file_type,
+                "file_name": file_name,
+                "parsed_structure": parsed
+            })
+        
+        else:
+            return json.dumps({
+                "success": False,
+                "error": f"Unsupported file type: {file_type}"
+            })
+    
+    except json.JSONDecodeError as e:
+        return json.dumps({
+            "success": False,
+            "error": f"Invalid JSON input: {str(e)}"
+        })
+    except Exception as e:
+        return json.dumps({
+            "success": False,
+            "error": f"Structure validation error: {str(e)}"
+        })
+
+
+# ===================== EXISTING VALIDATOR FUNCTION =====================
 
 def check_edi_structure(edi_text):
     """

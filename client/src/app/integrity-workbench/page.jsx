@@ -213,6 +213,7 @@ export default function IntegrityWorkbenchPage() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState('All');
   const [selectedMember, setSelectedMember] = useState(null);
+  const [validationResult, setValidationResult] = useState(null);
 
   const { data: members = [], isLoading } = useQuery({
     queryKey: ['members'],
@@ -225,15 +226,14 @@ export default function IntegrityWorkbenchPage() {
       const res = await fetch('/api/parse-members', { method: 'POST' });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['members'] });
       queryClient.invalidateQueries({ queryKey: ['metrics'] });
-      alert('Successfully validated and processed members!');
+      setValidationResult(data);
     },
   });
 
   // Only members actively in the validation pipeline belong here.
-  // Enrolled, Enrolled (SEP), In Review, In Batch etc. are downstream — exclude them.
   const WORKBENCH_STATUSES = ['Pending Business Validation', 'Ready', 'Awaiting Clarification'];
   const workbenchMembers = members.filter(m => WORKBENCH_STATUSES.includes(m.status));
 
@@ -263,15 +263,39 @@ export default function IntegrityWorkbenchPage() {
           <h1 className={styles.title}>Integrity Workbench</h1>
           <p className={styles.subtitle}>Consolidated overview of member validation and enrollment readiness.</p>
         </div>
-        <button
-          className={styles.primaryButton}
-          onClick={() => parseMutation.mutate()}
-          disabled={parseMutation.isPending || !hasPendingValidation}
-          style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: (parseMutation.isPending || !hasPendingValidation) ? 0.5 : 1 }}
-        >
-          <Play size={16} /> {parseMutation.isPending ? 'Validating...' : 'Initiate Member Validations'}
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+          <button
+            className={styles.primaryButton}
+            onClick={() => { setValidationResult(null); parseMutation.mutate(); }}
+            disabled={parseMutation.isPending || !hasPendingValidation}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              opacity: parseMutation.isPending ? 0.7 : 1,
+              // Pulse ring when there are pending members waiting
+              boxShadow: hasPendingValidation && !parseMutation.isPending
+                ? '0 0 0 3px rgba(59,130,246,0.25)'
+                : 'none',
+              transition: 'box-shadow 0.3s ease',
+            }}
+          >
+            <Play size={16} />
+            {parseMutation.isPending ? 'Validating...' : `Initiate Member Validations${pending.length > 0 ? ` (${pending.length})` : ''}`}
+          </button>
+          {/* Inline result — replaces the old alert() */}
+          {validationResult && (
+            <div style={{
+              fontSize: '0.8rem', fontWeight: 600, padding: '6px 12px',
+              borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '6px',
+              backgroundColor: 'var(--success-light)', color: 'var(--success)',
+            }}>
+              <ShieldCheck size={14} />
+              {validationResult.validated} ready, {validationResult.clarifications} need clarification
+            </div>
+          )}
+        </div>
       </div>
+
+
 
       {/* KPI cards */}
       <div className={styles.kpiGrid} style={{ gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px', marginBottom: '32px' }}>

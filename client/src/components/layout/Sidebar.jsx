@@ -8,12 +8,12 @@ import {
   FileText,
   UserCheck,
   MessageSquare,
-  CheckCircle,
   Package,
   Activity,
   BarChart,
   Settings,
-  Bot
+  Bot,
+  Zap,
 } from 'lucide-react';
 import useUIStore from '../../store/uiStore';
 import styles from './Sidebar.module.css';
@@ -23,6 +23,7 @@ const navItems = [
   { href: '/file-intake', label: 'Subscriber Onboarding', icon: FileText },
   { href: '/integrity-workbench', label: 'Integrity Workbench', icon: UserCheck },
   { href: '/clarifications', label: 'Clarifications', icon: MessageSquare },
+  { href: '/classifier', label: 'Classifier', icon: Zap },
   { href: '/release-staging', label: 'Release Staging', icon: Package },
   { href: '/enrollment-monitoring', label: 'Enrollment Monitoring', icon: Activity },
   { href: '/insights', label: 'Insights', icon: BarChart },

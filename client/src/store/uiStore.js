@@ -114,6 +114,19 @@ const useUIStore = create(
           completedRuns: { ...prev.completedRuns, [state.batchId]: state },
         })),
 
+      // Running batch IDs — persisted so LIVE indicator survives navigation
+      runningBatchIds: [],
+
+      addRunningBatch: (batchId) =>
+        set((state) => ({
+          runningBatchIds: [...new Set([...state.runningBatchIds, batchId])],
+        })),
+
+      removeRunningBatch: (batchId) =>
+        set((state) => ({
+          runningBatchIds: state.runningBatchIds.filter((id) => id !== batchId),
+        })),
+
       // Start a brand-new conversation and make it active
       startNewConversation: () => {
         const newConv = createNewConversation();
@@ -160,6 +173,7 @@ const useUIStore = create(
         showAnnotations: state.showAnnotations,
         sidebarOpen: state.sidebarOpen,
         completedRuns: state.completedRuns,
+        runningBatchIds: state.runningBatchIds,
       }),
     }
   )

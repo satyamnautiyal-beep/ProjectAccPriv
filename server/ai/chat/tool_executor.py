@@ -533,6 +533,422 @@ async def _execute_tool(name: str, args: Dict[str, Any]) -> str:
             except Exception as e:
                 return json.dumps({"error": str(e), "agent_summary": None})
 
+        # ------------------------------------------------------------------ #
+        #  RENEWAL & RETRO TOOLS                                              #
+        # ------------------------------------------------------------------ #
+        elif name == "process_renewal_834":
+            from server.ai.agents.renewal_processor import RenewalProcessorAgent
+
+            edi_text = args.get("edi_text", "").strip()
+            if not edi_text:
+                return json.dumps({"error": "edi_text is required"})
+
+            batch_id = args.get("batch_id", "").strip()
+            file_name = args.get("file_name", "").strip()
+
+            input_data = {
+                "edi_text": edi_text,
+                "batch_id": batch_id or None,
+                "file_name": file_name or "renewal_834.edi"
+            }
+
+            result_json = await RenewalProcessorAgent(json.dumps(input_data))
+            result = json.loads(result_json)
+
+            if not result.get("success"):
+                return json.dumps({"error": result.get("error", "Processing failed")})
+
+            return json.dumps(result)
+
+        elif name == "get_premium_alerts":
+            from db.mongo_connection import get_database
+
+            db = get_database()
+            if db is None:
+                return json.dumps({"error": "Database not available"})
+
+            priority = args.get("priority", "").strip()
+            status = args.get("status", "").strip()
+            limit = args.get("limit", 50)
+
+            filter_dict = {"case_type": "PREMIUM_CHANGE_ALERT"}
+
+            if priority:
+                filter_dict["priority"] = priority
+
+            if status:
+                filter_dict["status"] = status
+
+            alerts = list(
+                db["renewal_cases"]
+                .find(filter_dict, {"_id": 0})
+                .sort("created_at", -1)
+                .limit(limit)
+            )
+
+            total = db["renewal_cases"].count_documents(filter_dict)
+
+            return json.dumps({
+                "success": True,
+                "alerts": alerts,
+                "total": total,
+                "limit": limit,
+                "priority_filter": priority or "all",
+                "status_filter": status or "all"
+            })
+
+        elif name == "approve_premium_alert":
+            from db.mongo_connection import get_database
+            from datetime import datetime as _datetime
+
+            db = get_database()
+            if db is None:
+                return json.dumps({"error": "Database not available"})
+
+            case_id = args.get("case_id", "").strip()
+            action = args.get("action", "").strip()
+            notes = args.get("notes", "").strip()
+
+            if not case_id or not action:
+                return json.dumps({"error": "case_id and action are required"})
+
+            valid_actions = ["send", "hold", "reject"]
+            if action not in valid_actions:
+                return json.dumps({"error": f"Invalid action: {action}. Must be one of: {', '.join(valid_actions)}"})
+
+            alert = db["renewal_cases"].find_one({"case_id": case_id}, {"_id": 0})
+
+            if not alert:
+                return json.dumps({"error": f"Alert {case_id} not found"})
+
+            if action == "send":
+                new_status = "RESOLVED"
+                message = "Communication sent to member"
+            elif action == "hold":
+                new_status = "AWAITING_SPECIALIST"
+                message = "Alert held for further review"
+            else:  # reject
+                new_status = "REJECTED"
+                message = "Alert rejected"
+
+            activity_entry = {
+                "timestamp": _datetime.now().isoformat(),
+                "action": f"ALERT_{action.upper()}",
+                "actor": "specialist",
+                "details": notes or message
+            }
+
+            db["renewal_cases"].update_one(
+                {"case_id": case_id},
+                {
+                    "$set": {"status": new_status},
+                    "$push": {"activity_log": activity_entry}
+                }
+            )
+
+            return json.dumps({
+                "success": True,
+                "case_id": case_id,
+                "action": action,
+                "message": message
+            })
+
+        elif name == "create_retro_case":
+            from server.ai.agents.retro_orchestrator import RetroEnrollmentOrchestratorAgent
+
+            member_id = args.get("member_id", "").strip()
+            retro_effective_date = args.get("retro_effective_date", "").strip()
+            auth_source = args.get("auth_source", "").strip()
+
+            if not all([member_id, retro_effective_date, auth_source]):
+                return json.dumps({"error": "member_id, retro_effective_date, and auth_source are required"})
+
+            input_data = {
+                "member_id": member_id,
+                "retro_effective_date": retro_effective_date,
+                "auth_source": auth_source,
+                "member_name": args.get("member_name", "").strip() or "Unknown",
+                "member_dob": args.get("member_dob", "").strip() or "",
+                "member_state": args.get("member_state", "").strip() or ""
+            }
+
+            result_json = await RetroEnrollmentOrchestratorAgent(json.dumps(input_data))
+            result = json.loads(result_json)
+
+            if not result.get("success"):
+                return json.dumps({"error": result.get("error", "Case creation failed")})
+
+            # Save to MongoDB
+            db = get_database()
+            if db is not None:
+                case_doc = {
+                    "case_id": result["case_id"],
+                    "member_id": result["member_id"],
+                    "member_name": result.get("member_name"),
+                    "member_dob": result.get("member_dob"),
+                    "member_state": result.get("member_state"),
+                    "case_type": "RETRO_ENROLLMENT",
+                    "status": result["status"],
+                    "retro_effective_date": result["retro_effective_date"],
+                    "retro_auth_source": result["retro_auth_source"],
+                    "retro_steps_completed": result["retro_steps_completed"],
+                    "retro_current_step": result["retro_current_step"],
+                    "retro_aptc_table": result.get("retro_aptc_table", []),
+                    "confirmation_834_deadline": result["confirmation_834_deadline"],
+                    "confirmation_834_sent_at": result.get("confirmation_834_sent_at"),
+                    "created_at": result["created_at"],
+                    "activity_log": result.get("activity_log", [])
+                }
+                db["retro_enrollments"].insert_one(case_doc)
+
+            return json.dumps({
+                "success": True,
+                "case_id": result["case_id"],
+                "member_id": result["member_id"],
+                "status": result["status"],
+                "retro_effective_date": result["retro_effective_date"],
+                "retro_steps_completed": result["retro_steps_completed"],
+                "retro_current_step": result["retro_current_step"],
+                "confirmation_834_deadline": result["confirmation_834_deadline"]
+            })
+
+        elif name == "get_retro_case":
+            from db.mongo_connection import get_database
+
+            db = get_database()
+            if db is None:
+                return json.dumps({"error": "Database not available"})
+
+            case_id = args.get("case_id", "").strip()
+            if not case_id:
+                return json.dumps({"error": "case_id is required"})
+
+            case = db["retro_enrollments"].find_one({"case_id": case_id}, {"_id": 0})
+
+            if not case:
+                return json.dumps({"error": f"Case {case_id} not found"})
+
+            return json.dumps({
+                "success": True,
+                "case": case
+            })
+
+        elif name == "confirm_retro_step":
+            from db.mongo_connection import get_database
+            from datetime import datetime as _datetime
+
+            db = get_database()
+            if db is None:
+                return json.dumps({"error": "Database not available"})
+
+            case_id = args.get("case_id", "").strip()
+            step_id = args.get("step_id", "").strip()
+            notes = args.get("notes", "").strip()
+
+            if not case_id or not step_id:
+                return json.dumps({"error": "case_id and step_id are required"})
+
+            case = db["retro_enrollments"].find_one({"case_id": case_id}, {"_id": 0})
+
+            if not case:
+                return json.dumps({"error": f"Case {case_id} not found"})
+
+            current_step = case.get("retro_current_step")
+            if current_step != step_id:
+                return json.dumps({
+                    "error": f"Cannot confirm step {step_id}. Current step is {current_step}"
+                })
+
+            # Define step workflow
+            step_workflow = [
+                "AUTH_VERIFY",
+                "POLICY_ACTIVATE",
+                "APTC_CALCULATE",
+                "CSR_CONFIRM",
+                "BILLING_ADJUST",
+                "CONFIRMATION_834"
+            ]
+
+            # Get next step
+            current_index = step_workflow.index(step_id) if step_id in step_workflow else -1
+            next_step = step_workflow[current_index + 1] if current_index + 1 < len(step_workflow) else None
+
+            # Add activity log entry
+            activity_entry = {
+                "timestamp": _datetime.now().isoformat(),
+                "action": "STEP_CONFIRMED",
+                "actor": "specialist",
+                "details": f"Step {step_id} confirmed. {notes or ''}"
+            }
+
+            # Update case
+            update_dict = {
+                "$push": {
+                    "retro_steps_completed": step_id,
+                    "activity_log": activity_entry
+                }
+            }
+
+            if next_step:
+                update_dict["$set"] = {"retro_current_step": next_step}
+            else:
+                update_dict["$set"] = {"status": "COMPLETED"}
+
+            db["retro_enrollments"].update_one(
+                {"case_id": case_id},
+                update_dict
+            )
+
+            return json.dumps({
+                "success": True,
+                "case_id": case_id,
+                "step_id": step_id,
+                "next_step": next_step,
+                "message": f"Step {step_id} confirmed. Next step: {next_step or 'COMPLETED'}"
+            })
+
+        # ------------------------------------------------------------------ #
+        #  UNIFIED INTAKE PIPELINE                                            #
+        # ------------------------------------------------------------------ #
+        elif name == "process_file_intake":
+            from server.ai.agents.intake_orchestrator import IntakeOrchestrator
+            from db.mongo_connection import get_database
+            import time
+            import random
+            
+            file_content = args.get("file_content", "").strip()
+            file_name = args.get("file_name", "unknown.edi").strip()
+            subscriber_id = args.get("subscriber_id", "").strip()
+            
+            if not file_content:
+                return json.dumps({
+                    "success": False,
+                    "error": "file_content is required"
+                })
+            
+            # Generate case ID
+            case_id = f"INT-{_dt.utcnow().strftime('%Y%m%d')}-{int(time.time()) % 1000}"
+            
+            # Prepare intake payload
+            intake_payload = {
+                "file_content": file_content,
+                "file_type": "edi_834",
+                "file_name": file_name,
+                "subscriber_id": subscriber_id or f"AUTO-{os.urandom(4).hex()}",
+                "case_id": case_id,
+                "uploaded_at": _dt.utcnow().isoformat()
+            }
+            
+            # Store intake case in database for tracking
+            db = get_database()
+            if db is not None:
+                db.intake_cases.insert_one({
+                    "case_id": case_id,
+                    "subscriber_id": intake_payload["subscriber_id"],
+                    "file_name": file_name,
+                    "status": "processing",
+                    "created_at": _dt.utcnow().isoformat(),
+                    "payload": intake_payload
+                })
+            
+            # Run orchestrator
+            try:
+                result_json = await IntakeOrchestrator(json.dumps(intake_payload))
+                result = json.loads(result_json)
+                
+                # Update case with result
+                if db is not None:
+                    update_data = {
+                        "status": "completed" if result.get("success") else "failed",
+                        "file_classification": result.get("file_classification"),
+                        "routing_target": result.get("routing_target"),
+                        "completed_at": _dt.utcnow().isoformat()
+                    }
+                    
+                    if result.get("success"):
+                        update_data["result"] = result
+                    else:
+                        update_data["error"] = result.get("error")
+                    
+                    db.intake_cases.update_one(
+                        {"case_id": case_id},
+                        {"$set": update_data}
+                    )
+                
+                return json.dumps({
+                    "success": True,
+                    "case_id": case_id,
+                    "subscriber_id": intake_payload["subscriber_id"],
+                    "file_name": file_name,
+                    "file_classification": result.get("file_classification"),
+                    "routing_target": result.get("routing_target"),
+                    "status": "completed" if result.get("success") else "failed",
+                    "result": result if result.get("success") else None,
+                    "error": result.get("error") if not result.get("success") else None
+                })
+            
+            except Exception as e:
+                if db is not None:
+                    db.intake_cases.update_one(
+                        {"case_id": case_id},
+                        {
+                            "$set": {
+                                "status": "failed",
+                                "error": str(e),
+                                "completed_at": _dt.utcnow().isoformat()
+                            }
+                        }
+                    )
+                
+                return json.dumps({
+                    "success": False,
+                    "case_id": case_id,
+                    "error": str(e),
+                    "status": "failed"
+                })
+        
+        elif name == "get_intake_status":
+            from db.mongo_connection import get_database
+            
+            case_id = args.get("case_id", "").strip()
+            if not case_id:
+                return json.dumps({
+                    "success": False,
+                    "error": "case_id is required"
+                })
+            
+            db = get_database()
+            if db is None:
+                return json.dumps({
+                    "success": False,
+                    "error": "Database not available"
+                })
+            
+            case = db.intake_cases.find_one(
+                {"case_id": case_id},
+                {"_id": 0}
+            )
+            
+            if not case:
+                return json.dumps({
+                    "success": False,
+                    "error": f"Case not found: {case_id}"
+                })
+            
+            return json.dumps({
+                "success": True,
+                "case_id": case.get("case_id"),
+                "status": case.get("status"),
+                "subscriber_id": case.get("subscriber_id"),
+                "file_name": case.get("file_name"),
+                "file_classification": case.get("file_classification"),
+                "routing_target": case.get("routing_target"),
+                "result": case.get("result"),
+                "error": case.get("error"),
+                "created_at": case.get("created_at"),
+                "completed_at": case.get("completed_at")
+            })
+
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 

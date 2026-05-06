@@ -12,8 +12,16 @@ const nextConfig = {
   async headers() {
     return [
       {
-        // Disable buffering on the SSE chat endpoint so events stream in real time
+        // Disable buffering on all SSE streaming endpoints
         source: '/api/assistant/chat/llm',
+        headers: [
+          { key: 'X-Accel-Buffering', value: 'no' },
+          { key: 'Cache-Control', value: 'no-cache, no-transform' },
+        ],
+      },
+      {
+        // Disable buffering on batch pipeline streaming (POST start + GET reconnect)
+        source: '/api/batches/stream/:batch_id*',
         headers: [
           { key: 'X-Accel-Buffering', value: 'no' },
           { key: 'Cache-Control', value: 'no-cache, no-transform' },

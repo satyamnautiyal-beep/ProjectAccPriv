@@ -40,13 +40,11 @@ const sortFiles = (files = []) =>
     return (isNew(a) ? 0 : 1) - (isNew(b) ? 0 : 1);
   });
 
-/** Returns status badge config. Unverified = anything not yet checked. */
 const getStatusMeta = (status = '') => {
   if (isPassed(status))
     return { label: 'Verified', cls: fi.statusReady, icon: <ShieldCheck size={12} /> };
   if (isCorrupt(status))
     return { label: 'Cannot be Processed', cls: fi.statusCorrupt, icon: <ShieldAlert size={12} /> };
-  // Default — freshly uploaded or pending check
   return { label: 'Not Verified', cls: fi.statusDefault, icon: <Clock size={12} /> };
 };
 
@@ -58,40 +56,45 @@ export default function FileIntakePage() {
   const fileInputRef = useRef(null);
 
   const [isDragging, setIsDragging] = useState(false);
+  // '' | 'uploading' | 'validating' | 'success'
   const [uploadState, setUploadState] = useState('');
-  const [isChecking, setIsChecking] = useState(false);
   const [checkResult, setCheckResult] = useState(null);
+  const [isManualChecking, setIsManualChecking] = useState(false);
 
+  // ── Live file list — only files still pending (not yet parsed through) ──
   const { data: rawFiles = [], isLoading } = useQuery({
     queryKey: ['files'],
     queryFn: () => fetch('/api/files').then((r) => r.json()),
     refetchInterval: 2000,
   });
 
-  // Passed files disappear from this view — they move to Integrity Workbench
   const files = sortFiles(rawFiles.filter((f) => !isPassed(f.status)));
-  const corruptCount = files.filter((f) => isCorrupt(f.status)).length;
+  const corruptFiles = files.filter((f) => isCorrupt(f.status));
+  const pendingFiles = files.filter((f) => !isCorrupt(f.status));
+  const corruptCount = corruptFiles.length;
 
-  const handleCheckStructure = async () => {
-    setIsChecking(true);
-    setCheckResult(null);
+  // ── Structure check — parses healthy files into MongoDB as Pending Business Validation ──
+  const runStructureCheck = async () => {
     try {
       const res = await fetch('/api/check-structure', { method: 'POST' });
       const data = await res.json();
       setCheckResult({ healthy: data.healthy, issues: data.issues });
+      // Invalidate all downstream queries so Integrity Workbench lights up immediately
       queryClient.invalidateQueries({ queryKey: ['files'] });
-      queryClient.invalidateQueries({ queryKey: ['metrics'] });
       queryClient.invalidateQueries({ queryKey: ['members'] });
+      queryClient.invalidateQueries({ queryKey: ['metrics'] });
+      return data;
     } catch (err) {
-      console.error(err);
-    } finally {
-      setIsChecking(false);
+      console.error('Structure check error:', err);
+      return null;
     }
   };
 
+  // ── Upload → immediately auto-run structure check ────────────────────────
   const uploadMutation = useMutation({
     mutationFn: async (fileList) => {
       setUploadState('uploading');
+      setCheckResult(null);
       for (let i = 0; i < fileList.length; i++) {
         const formData = new FormData();
         formData.append('file', fileList[i]);
@@ -99,14 +102,25 @@ export default function FileIntakePage() {
       }
       return true;
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['files'] });
-      queryClient.invalidateQueries({ queryKey: ['metrics'] });
+      // Auto-run structure validation — parses healthy files into MongoDB
+      setUploadState('validating');
+      await runStructureCheck();
       setUploadState('success');
-      setTimeout(() => setUploadState(''), 2000);
+      setTimeout(() => setUploadState(''), 4000);
     },
   });
 
+  // ── Manual re-check (for files already sitting in the queue) ────────────
+  const handleManualCheck = async () => {
+    setIsManualChecking(true);
+    setCheckResult(null);
+    await runStructureCheck();
+    setIsManualChecking(false);
+  };
+
+  // ── Reject corrupt files ────────────────────────────────────────────────
   const rejectMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch('/api/reject-corrupt', { method: 'POST' });
@@ -131,13 +145,25 @@ export default function FileIntakePage() {
     if (e.dataTransfer.files?.length > 0) uploadMutation.mutate(e.dataTransfer.files);
   };
 
-  const corruptFiles = files.filter((f) => isCorrupt(f.status));
-  const pendingFiles = files.filter((f) => !isCorrupt(f.status));
+  const isProcessing = uploadState === 'uploading' || uploadState === 'validating';
+
+  const uploadLabel =
+    uploadState === 'uploading' ? 'Uploading files...' :
+    uploadState === 'validating' ? 'Running structure validation...' :
+    uploadState === 'success' ? 'Done — members queued for business validation' :
+    'Upload EDI 834 files';
+
+  const uploadSubtext =
+    uploadState === 'validating' ? 'Parsing EDI structure and storing members in database...' :
+    uploadState === 'success' && checkResult?.healthy > 0 ? 'Head to Integrity Workbench to run business validation' :
+    'Structure validation runs automatically — no manual step needed';
+
+  const uploadSubtextColor =
+    uploadState === 'success' && checkResult?.healthy > 0 ? 'var(--success)' : 'var(--text-muted)';
 
   const renderRow = (file) => {
     const corrupt = isCorrupt(file.status);
     const { label, cls, icon } = getStatusMeta(file.status);
-
     return (
       <tr key={file.id} className={corrupt ? fi.fileRowCorrupt : ''}>
         <td>
@@ -149,10 +175,7 @@ export default function FileIntakePage() {
           </div>
         </td>
         <td>
-          <span className={`${fi.statusBadge} ${cls}`}>
-            {icon}
-            {label}
-          </span>
+          <span className={`${fi.statusBadge} ${cls}`}>{icon}{label}</span>
           {corrupt && (
             <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: 4 }}>
               {file.error || 'File cannot be parsed — return to broker'}
@@ -165,42 +188,53 @@ export default function FileIntakePage() {
 
   return (
     <div className={styles.container}>
-      {/* Header */}
+
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className={styles.header} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h1 className={styles.title}>Subscriber Onboard</h1>
+          <h1 className={styles.title}>Subscriber Onboarding</h1>
           <p className={styles.subtitle}>
-            Upload and validate EDI 834 files. Corrupted files are automatically surfaced for action.
+            Upload EDI 834 files. Valid files are automatically parsed and queued for business validation.
           </p>
         </div>
         <button
-          onClick={handleCheckStructure}
-          disabled={isChecking}
+          onClick={handleManualCheck}
+          disabled={isManualChecking || isProcessing}
           style={{
             backgroundColor: 'var(--primary)', color: '#fff', border: 'none',
             padding: '8px 18px', borderRadius: '8px',
-            cursor: isChecking ? 'not-allowed' : 'pointer',
-            opacity: isChecking ? 0.7 : 1,
+            cursor: (isManualChecking || isProcessing) ? 'not-allowed' : 'pointer',
+            opacity: (isManualChecking || isProcessing) ? 0.7 : 1,
             fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem',
           }}
         >
-          {isChecking
-            ? <><RefreshCw size={16} className="animate-spin" /> Checking…</>
-            : <><RefreshCw size={16} /> Check Batch Health</>}
+          {isManualChecking
+            ? <><RefreshCw size={16} className="animate-spin" /> Checking...</>
+            : <><RefreshCw size={16} /> Re-check Files</>}
         </button>
       </div>
 
-      {/* Check result banner */}
+      {/* ── Result banner ───────────────────────────────────────────────── */}
       {checkResult && (
         <div style={{
-          padding: 'var(--space-4)', borderRadius: 'var(--radius-md)',
+          padding: 'var(--space-4)', borderRadius: 'var(--radius-md)', marginBottom: '16px',
           backgroundColor: checkResult.issues > 0 ? 'var(--danger-light)' : 'var(--success-light)',
           color: checkResult.issues > 0 ? 'var(--danger-dark)' : 'var(--success-dark)',
           fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {checkResult.issues > 0 ? <AlertTriangle size={20} /> : <Check size={20} />}
-            <span>Validation complete — {checkResult.healthy} healthy, {checkResult.issues} with issues.</span>
+            <span>
+              {checkResult.healthy > 0
+                ? `${checkResult.healthy} file${checkResult.healthy > 1 ? 's' : ''} parsed and queued for business validation.`
+                : ''}
+              {checkResult.issues > 0
+                ? ` ${checkResult.issues} file${checkResult.issues > 1 ? 's' : ''} could not be processed.`
+                : ''}
+              {checkResult.healthy === 0 && checkResult.issues === 0
+                ? 'No new files to process.'
+                : ''}
+            </span>
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             {checkResult.issues > 0 && (
@@ -213,22 +247,25 @@ export default function FileIntakePage() {
                   fontSize: '0.85rem', fontWeight: 600,
                 }}
               >
-                {rejectMutation.isPending ? 'Sending…' : 'Return to broker'}
+                {rejectMutation.isPending ? 'Sending...' : 'Return to broker'}
               </button>
             )}
-            <button onClick={() => setCheckResult(null)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', padding: 4 }}>
+            <button
+              onClick={() => setCheckResult(null)}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', padding: 4 }}
+            >
               <X size={18} />
             </button>
           </div>
         </div>
       )}
 
-      {/* Upload zone */}
+      {/* ── Upload zone ─────────────────────────────────────────────────── */}
       <Annotation
         title="File Upload"
         what="Entry point for EDI 834 batch files"
         why="Secure ingestion of raw enrollment data from brokers"
-        how="Accepts .edi files via drag-and-drop or file picker; triggers immediate structural validation"
+        how="Accepts .edi files via drag-and-drop or file picker. Structure validation runs automatically on upload — healthy files are parsed and stored as Pending Business Validation in MongoDB."
       >
         <div
           className={styles.sectionCard}
@@ -236,102 +273,117 @@ export default function FileIntakePage() {
             padding: 'var(--space-8)',
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
             border: isDragging ? '2px dashed var(--primary)' : '2px dashed var(--border)',
-            backgroundColor: isDragging ? 'var(--primary-light)' : 'var(--bg-root)',
-            cursor: 'pointer', transition: 'all 0.2s ease',
+            backgroundColor: isDragging
+              ? 'var(--primary-light)'
+              : isProcessing
+              ? 'rgba(59,130,246,0.03)'
+              : 'var(--bg-root)',
+            cursor: isProcessing ? 'default' : 'pointer',
+            transition: 'all 0.2s ease', minHeight: '200px',
+            pointerEvents: isProcessing ? 'none' : 'auto',
           }}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
           onDrop={onDrop}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => !isProcessing && fileInputRef.current?.click()}
         >
-          <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{ display: 'none' }} accept=".csv,.xlsx,.xls,.edi" multiple />
-          {uploadState === 'uploading'
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+            accept=".edi"
+            multiple
+          />
+
+          {isProcessing
             ? <RefreshCw size={44} className="animate-spin" color="var(--primary)" style={{ marginBottom: 'var(--space-4)' }} />
+            : uploadState === 'success'
+            ? <Check size={44} color="var(--success)" style={{ marginBottom: 'var(--space-4)' }} />
             : <UploadCloud size={44} color="var(--primary)" style={{ marginBottom: 'var(--space-4)' }} />}
+
           <h3 style={{ fontWeight: 600, fontSize: '1.1rem', marginBottom: 'var(--space-2)' }}>
-            {uploadState === 'uploading' ? 'Uploading…' : 'Upload .EDI files'}
+            {uploadLabel}
           </h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Drag & drop files here, or click to browse</p>
+          <p style={{ color: uploadSubtextColor, fontSize: '0.85rem', textAlign: 'center' }}>
+            {uploadSubtext}
+          </p>
+          {!isProcessing && uploadState !== 'success' && (
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginTop: '8px' }}>
+              Drag & drop or click to browse
+            </p>
+          )}
         </div>
       </Annotation>
 
-      {/* File table — simplified */}
-      <Annotation
-        title="Corrupted File Prioritization"
-        what="Corrupted files automatically surfaced at the top of the list"
-        why="Ensures case workers immediately see files that need urgent action before processing downstream"
-        how="Frontend sorts by status — corrupt files rise to top, new uploads follow, rest below"
-      >
-        <div className={styles.sectionCard}>
-          <div className={styles.cardHeader}>
-            <h2 className={styles.cardTitle}>Recent Uploads</h2>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      {/* ── Files requiring action (corrupt / unchecked only) ───────────── */}
+      {(files.length > 0 || isLoading) && (
+        <Annotation
+          title="Corrupted File Prioritization"
+          what="Files that failed structure validation — surfaced for immediate action"
+          why="Ensures case workers see files that need to be returned to the broker before they block downstream processing"
+          how="Corrupt files stay in the queue; healthy files are automatically removed after parsing"
+        >
+          <div className={styles.sectionCard}>
+            <div className={styles.cardHeader}>
+              <h2 className={styles.cardTitle}>Files Requiring Action</h2>
               {corruptCount > 0 && (
                 <span className={`${fi.statusBadge} ${fi.statusCorrupt}`} style={{ fontSize: '0.72rem' }}>
                   <ShieldAlert size={11} />
-                  {corruptCount} file{corruptCount > 1 ? 's' : ''} need action
+                  {corruptCount} file{corruptCount > 1 ? 's' : ''} cannot be processed
                 </span>
               )}
             </div>
-          </div>
 
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>File Name</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading && (
+            <table className={styles.table}>
+              <thead>
                 <tr>
-                  <td colSpan={2} style={{ textAlign: 'center', padding: 'var(--space-8)', color: 'var(--text-muted)' }}>
-                    <Loader2 size={20} className={fi.spin} style={{ display: 'inline-block', marginRight: 8 }} />
-                    Loading files…
-                  </td>
+                  <th>File Name</th>
+                  <th>Status</th>
                 </tr>
-              )}
-              {!isLoading && files.length === 0 && (
-                <tr>
-                  <td colSpan={2} style={{ textAlign: 'center', padding: 'var(--space-8)', color: 'var(--text-muted)' }}>
-                    No pending files. All uploads have been verified and moved to the Integrity Workbench.
-                  </td>
-                </tr>
-              )}
-
-              {corruptFiles.length > 0 && (
-                <>
+              </thead>
+              <tbody>
+                {isLoading && (
                   <tr>
-                    <td colSpan={2} style={{ padding: 0 }}>
-                      <div className={`${fi.sectionDivider} ${fi.sectionDividerCorrupt}`}>
-                        <span className={fi.sectionDividerDot} />
-                        Requires Immediate Action — {corruptFiles.length} corrupted file{corruptFiles.length > 1 ? 's' : ''}
-                      </div>
+                    <td colSpan={2} style={{ textAlign: 'center', padding: 'var(--space-8)', color: 'var(--text-muted)' }}>
+                      <Loader2 size={20} className={fi.spin} style={{ display: 'inline-block', marginRight: 8 }} />
+                      Loading files...
                     </td>
                   </tr>
-                  {corruptFiles.map(renderRow)}
-                </>
-              )}
-
-              {pendingFiles.length > 0 && (
-                <>
-                  {corruptFiles.length > 0 && (
+                )}
+                {corruptFiles.length > 0 && (
+                  <>
                     <tr>
                       <td colSpan={2} style={{ padding: 0 }}>
-                        <div className={fi.sectionDivider}>
+                        <div className={`${fi.sectionDivider} ${fi.sectionDividerCorrupt}`}>
                           <span className={fi.sectionDividerDot} />
-                          Pending Verification
+                          Requires Immediate Action — {corruptFiles.length} corrupted file{corruptFiles.length > 1 ? 's' : ''}
                         </div>
                       </td>
                     </tr>
-                  )}
-                  {pendingFiles.map(renderRow)}
-                </>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Annotation>
+                    {corruptFiles.map(renderRow)}
+                  </>
+                )}
+                {pendingFiles.length > 0 && (
+                  <>
+                    {corruptFiles.length > 0 && (
+                      <tr>
+                        <td colSpan={2} style={{ padding: 0 }}>
+                          <div className={fi.sectionDivider}>
+                            <span className={fi.sectionDividerDot} />
+                            Pending Verification
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {pendingFiles.map(renderRow)}
+                  </>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Annotation>
+      )}
     </div>
   );
 }
