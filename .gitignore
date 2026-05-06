@@ -1,28 +1,29 @@
-# --- Backend & Python ---
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
 .venv/
 venv/
 env/
+*.egg-info/
+dist/
 *.db
 *.sqlite3
 
-# --- Data & Workdirs ---
+# ── Data directories (EDI files, parsed output) ───────────────────────────────
 data/
 parsed_data/
 
-# --- Synthetic / Test Data ---
-# Ignore all test_data subfolders except demo
-test_data/*
-!test_data/demo/
-test_data/demo/*
-!test_data/demo/**
+# ── Test data (keep only the demo fixtures) ───────────────────────────────────
+data/test_data/
+!data/test_data/renewal_and_retro_pipeline_testing/
 
-# --- AI Refinery session tokens ---
+# ── AI Refinery session tokens & project version cache ───────────────────────
 .air/
+server/ai/.enrollment_intelligence_project_version
 
-# --- Frontend & React ---
+# ── Frontend ──────────────────────────────────────────────────────────────────
 node_modules/
 .next/
 out/
@@ -35,24 +36,23 @@ build/
 !.yarn/releases
 !.yarn/versions
 
-# --- Logs & Debug ---
+# ── Logs ──────────────────────────────────────────────────────────────────────
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 *.log
 
-
+# ── Kiro IDE ──────────────────────────────────────────────────────────────────
 .kiro/
 
-
-# --- Environment & Secrets ---
+# ── Environment & secrets ─────────────────────────────────────────────────────
 .env
 .env.local
 .env.*.local
 *.pem
 
-# --- IDE & OS ---
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 .DS_Store
@@ -60,7 +60,7 @@ yarn-error.log*
 *.bak
 Thumbs.db
 
-# --- Miscellaneous ---
+# ── Build artefacts ───────────────────────────────────────────────────────────
 .vercel/
 *.tsbuildinfo
 next-env.d.ts

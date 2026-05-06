@@ -3,6 +3,7 @@ Shared utility functions used across agents and workflows.
 """
 import json
 import os
+import re
 from datetime import datetime, timezone, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -18,6 +19,60 @@ OEP_END_DATE = os.getenv("OEP_END_DATE")      # YYYY-MM-DD
 
 def _utc_now_z() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
+# LLM RESPONSE HELPERS
+# ---------------------------------------------------------------------------
+
+def extract_json_from_llm(text: str) -> dict:
+    """
+    Robustly extract a JSON object from an LLM response.
+
+    Handles:
+    - Plain JSON:           {"key": "value"}
+    - Markdown fenced:      ```json\\n{...}\\n```
+    - Fenced without lang:  ```\\n{...}\\n```
+    - JSON embedded in prose: some text {"key": "value"} more text
+    - Escaped apostrophes:  {\\'key\\': \\'value\\'} (model quirk)
+
+    Raises json.JSONDecodeError if no valid JSON object is found.
+    """
+    text = text.strip()
+
+    # 1. Try the whole string first (fastest path for clean responses)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Strip markdown code fences and retry
+    fenced = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    fenced = re.sub(r"\s*```\s*$", "", fenced).strip()
+    try:
+        return json.loads(fenced)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Fix escaped apostrophes that some models emit (\' → ')
+    fixed = fenced.replace("\\'", "'")
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # 4. Extract the first {...} block using regex (handles prose wrapping)
+    match = re.search(r"\{[\s\S]*\}", text)
+    if match:
+        candidate = match.group(0)
+        # Try as-is, then with apostrophe fix
+        for attempt in (candidate, candidate.replace("\\'", "'")):
+            try:
+                return json.loads(attempt)
+            except json.JSONDecodeError:
+                pass
+
+    raise json.JSONDecodeError("No valid JSON object found in LLM response", text, 0)
 
 
 def _parse_date(d: Optional[str]) -> Optional[date]:

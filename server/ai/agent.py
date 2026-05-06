@@ -25,12 +25,14 @@ from .data.views import (                                      # noqa: F401
 
 # Agents
 from .agents import get_executor_dict                         # noqa: F401
-from .agents.classifier       import EnrollmentClassifierAgent  # noqa: F401
-from .agents.sep_inference    import SepInferenceAgent          # noqa: F401
-from .agents.normal_enrollment import NormalEnrollmentAgent     # noqa: F401
-from .agents.decision         import DecisionAgent              # noqa: F401
-from .agents.evidence_check   import EvidenceCheckAgent         # noqa: F401
-from .agents.router           import EnrollmentRouterAgent      # noqa: F401
+from .agents.classifier        import EnrollmentClassifierAgent  # noqa: F401
+from .agents.sep_inference     import SepInferenceAgent          # noqa: F401
+from .agents.normal_enrollment import NormalEnrollmentAgent      # noqa: F401
+from .agents.decision          import DecisionAgent              # noqa: F401
+from .agents.evidence_check    import EvidenceCheckAgent         # noqa: F401
+from .agents.router            import EnrollmentRouterAgent      # noqa: F401
+from .agents.renewal_agent     import RenewalProcessorAgent      # noqa: F401
+from .agents.retro_agent       import RetroEnrollmentOrchestratorAgent  # noqa: F401
 
 # executor_dict as a plain dict (legacy callers expect a dict, not a callable)
 executor_dict = get_executor_dict()

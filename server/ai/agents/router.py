@@ -23,38 +23,93 @@ DEFAULT_ENROLLMENT_SOURCE = os.getenv("DEFAULT_ENROLLMENT_SOURCE", "Employer")
 @register_agent("EnrollmentRouterAgent")
 async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
     """
-    Stage-specific routing:
-      1. Classify (last 2 snapshots)
+    Stage-specific routing (Phase 3 - accepts pre-classified data from IntakeOrchestrator):
+      1. Accept pre-classified data (file_classification already determined upstream)
       2. SEP inference OR normal flow
       3. Authority analysis
       4. Decision
       5. Evidence check (SEP only, when no hard blocks)
+    
+    Input JSON (from IntakeOrchestrator):
+    {
+        "subscriber_id": "SUB-12345",
+        "file_classification": "enrollment_oep" or "enrollment_sep",
+        "parsed_data": {...},
+        "subscriber_context": {...},
+        "business_metadata": {...}
+    }
+    
+    OR (backward compatibility - legacy direct calls):
+    {
+        "subscriber_id": "SUB-12345",
+        "history": {...}
+    }
     """
     try:
-        full_record = build_engine_input(json.loads(query))
-        subscriber_id = full_record.get("subscriber_id")
+        payload = json.loads(query)
+        subscriber_id = payload.get("subscriber_id")
+        
+        # ---- DETERMINE INPUT SOURCE ----
+        # Check if this is new pre-classified input from IntakeOrchestrator
+        file_classification = payload.get("file_classification")
+        parsed_data = payload.get("parsed_data")
+        subscriber_context = payload.get("subscriber_context")
+        business_metadata = payload.get("business_metadata")
+        
+        # If pre-classified data provided, use it; otherwise fall back to legacy flow
+        if file_classification and parsed_data:
+            # NEW FLOW: Pre-classified data from IntakeOrchestrator
+            # Skip classification step - already done upstream
+            classification = {
+                "file_classification": file_classification,
+                "sep_candidate": file_classification in ["enrollment_sep"],
+                "is_within_oep": file_classification in ["enrollment_oep", "enrollment_sep"],
+                "source": "intake_orchestrator_pre_classified"
+            }
+            full_record = parsed_data
+        else:
+            # LEGACY FLOW: Direct call with history (backward compatibility)
+            full_record = build_engine_input(payload)
+            
+            if not (full_record.get("history") or {}):
+                return json.dumps({
+                    "subscriber_id": subscriber_id,
+                    "root_status_recommended": "In Review",
+                    "agent_analysis": {"error": "No history snapshots found", "history_dates": []},
+                })
 
-        if not (full_record.get("history") or {}):
-            return json.dumps({
-                "subscriber_id": subscriber_id,
-                "root_status_recommended": "In Review",
-                "agent_analysis": {"error": "No history snapshots found", "history_dates": []},
-            })
-
-        # ---- 1) Classification
-        classification_record = classification_view(full_record)
-        classification = json.loads(
-            await EnrollmentClassifierAgent(json.dumps(classification_record))
-        )
+            # ---- 1) Classification (legacy path only)
+            classification_record = classification_view(full_record)
+            classification = json.loads(
+                await EnrollmentClassifierAgent(json.dumps(classification_record))
+            )
 
         # ---- 2) Branch analysis
-        if classification.get("sep_candidate"):
-            sep_record = sep_inference_view(full_record)
+        # For new pre-classified flow, determine branch based on file_classification
+        # For legacy flow, use sep_candidate from classification
+        is_sep_path = classification.get("sep_candidate", False)
+        
+        if is_sep_path:
+            # SEP path: use SepInferenceAgent
+            if file_classification and parsed_data:
+                # New flow: build sep_record from parsed_data
+                sep_record = parsed_data
+            else:
+                # Legacy flow: use sep_inference_view
+                sep_record = sep_inference_view(full_record)
+            
             branch_analysis = json.loads(
                 await SepInferenceAgent(json.dumps({"record": sep_record, "classification": classification}))
             )
         else:
-            normal_record = normal_flow_view(full_record)
+            # Normal/OEP path: use NormalEnrollmentAgent
+            if file_classification and parsed_data:
+                # New flow: build normal_record from parsed_data
+                normal_record = parsed_data
+            else:
+                # Legacy flow: use normal_flow_view
+                normal_record = normal_flow_view(full_record)
+            
             branch_analysis = json.loads(
                 await NormalEnrollmentAgent(json.dumps({"record": normal_record, "classification": classification}))
             )
@@ -71,7 +126,13 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
         }
 
         # ---- 4) Decision
-        decision_record = decision_view(full_record)
+        if file_classification and parsed_data:
+            # New flow: use parsed_data directly
+            decision_record = parsed_data
+        else:
+            # Legacy flow: use decision_view
+            decision_record = decision_view(full_record)
+        
         decision = json.loads(
             await DecisionAgent(
                 json.dumps({
@@ -123,39 +184,51 @@ async def EnrollmentRouterAgent(query: str, **kwargs) -> str:
             send_email(to=full_record.get("email"), email_payload=email)
 
         # ---- 6) Diff explainability
-        latest, prev, dates = _get_latest_two_snapshots(classification_record)
-        if prev is None:
+        # For new pre-classified flow, skip diff (no history snapshots)
+        # For legacy flow, compute diff from classification_record
+        if file_classification and parsed_data:
+            # New flow: no history snapshots available
             diff = {
-                "history_dates": dates,
+                "history_dates": [],
                 "diff": [],
-                "semantic_flags": ["first_snapshot_only"],
-                "notes": "Only one snapshot exists; nothing to diff yet.",
+                "semantic_flags": ["pre_classified_intake_flow"],
+                "notes": "Pre-classified intake flow - no historical snapshots to diff.",
             }
         else:
-            from ..core.utils import _deep_diff as _dd
-            raw_diffs = _dd(prev, latest)
-            flags = []
-            if len(raw_diffs) == 0:
-                flags.append("exact_resend_or_duplicate")
+            # Legacy flow: compute diff
+            latest, prev, dates = _get_latest_two_snapshots(classification_record)
+            if prev is None:
+                diff = {
+                    "history_dates": dates,
+                    "diff": [],
+                    "semantic_flags": ["first_snapshot_only"],
+                    "notes": "Only one snapshot exists; nothing to diff yet.",
+                }
             else:
-                non_status = [
-                    d for d in raw_diffs
-                    if not d["path"].endswith(".status") and d["path"] != "status"
-                ]
-                if len(non_status) == 0:
-                    flags.append("status_only_change")
-                if any("dependents" in d["path"] for d in raw_diffs):
-                    flags.append("household_structure_change")
-                if any("coverages" in d["path"] for d in raw_diffs):
-                    flags.append("coverage_change")
+                from ..core.utils import _deep_diff as _dd
+                raw_diffs = _dd(prev, latest)
+                flags = []
+                if len(raw_diffs) == 0:
+                    flags.append("exact_resend_or_duplicate")
+                else:
+                    non_status = [
+                        d for d in raw_diffs
+                        if not d["path"].endswith(".status") and d["path"] != "status"
+                    ]
+                    if len(non_status) == 0:
+                        flags.append("status_only_change")
+                    if any("dependents" in d["path"] for d in raw_diffs):
+                        flags.append("household_structure_change")
+                    if any("coverages" in d["path"] for d in raw_diffs):
+                        flags.append("coverage_change")
 
-            diff = {
-                "history_dates": dates,
-                "latest_date": dates[-1] if dates else None,
-                "previous_date": dates[-2] if len(dates) >= 2 else None,
-                "diff": raw_diffs,
-                "semantic_flags": flags,
-            }
+                diff = {
+                    "history_dates": dates,
+                    "latest_date": dates[-1] if dates else None,
+                    "previous_date": dates[-2] if len(dates) >= 2 else None,
+                    "diff": raw_diffs,
+                    "semantic_flags": flags,
+                }
 
         # ---- 5.5) SEP markers
         is_sep_candidate = bool(classification.get("sep_candidate"))

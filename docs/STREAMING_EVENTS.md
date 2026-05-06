@@ -1,166 +1,260 @@
 # Streaming Events Reference
 
-How SSE events are generated and sequenced across the two streaming surfaces in the app.
+How SSE events are generated and sequenced across the three pipeline types and the AI assistant chat.
 
 ---
 
-## Release Staging — Batch Enrollment Stream
+## Release Staging — Batch Pipeline Stream
 
 **Endpoint:** `POST /api/batches/stream/{batch_id}`  
-**Implementation:** `_run_batch_streaming()` in `server/ai/chat_agent.py`
+**Dispatcher:** `run_batch_streaming()` in `server/ai/workflows/enrollment_pipeline.py`
 
-Processes members sequentially. Each member goes through a fixed 5-stage AI pipeline, with `thinking` events emitted before and after each LLM call. The sequence below repeats for every member in the batch.
+The dispatcher reads `routing_target` from the batch document and delegates to the correct pipeline:
 
-### Event sequence
+| `routing_target` | Pipeline | File |
+|---|---|---|
+| `EnrollmentRouterAgent` | OEP / SEP | `enrollment_pipeline.py` |
+| `RenewalProcessorAgent` | Renewal | `renewal_pipeline.py` |
+| `RetroEnrollmentOrchestratorAgent` | Retro Coverage | `retro_pipeline.py` |
+
+All three pipelines share the same event types. The sequence below repeats for every member in the batch.
+
+---
+
+### Common event types
+
+| Type | Description | Key payload fields |
+|---|---|---|
+| `start` | Stream opened, before any processing | `batchId`, `memberCount`, `pipelineType`, `routingTarget` |
+| `pipeline_progress` | After each member completes | `done`, `total`, `enrolled`, `inReview`, `failed` |
+| `thinking` | Pipeline stage narrative | `message`, `scope` |
+| `agent_call` | Before an agent is invoked | `agent`, `message` |
+| `member_result` | Member pipeline complete | `subscriber_id`, `name`, `status`, `summary` |
+| `done` | All members processed, batch marked Completed | `batchId`, `processed`, `failed` |
+
+---
+
+### OEP / SEP Enrollment pipeline
+
+Five-stage AI pipeline using AI Refinery Distiller. Each stage emits `thinking` events before and after the LLM call.
 
 ```
 start
-└─ fires immediately when the endpoint is hit, before any processing
-   payload: { batchId, memberCount }
 
-── Per member (repeated for each member) ──────────────────────────────
+── Per member ──────────────────────────────────────────────────────────
 
 thinking  "-- Starting pipeline for <Name> (<ID>)"
-└─ before the member's pipeline begins
 
 thinking  "Reading enrollment history and checking for life-event signals..."
-└─ before Stage 1 LLM call (EnrollmentClassifierAgent)
+agent_call  EnrollmentClassifierAgent
+thinking  [classification result — SEP candidate or OEP routing note]
 
-  [LLM call: EnrollmentClassifierAgent]
+  ── SEP path ──────────────────────────────────────────────────────────
+  thinking  "Analysing what changed between snapshots..."
+  agent_call  SepInferenceAgent
+  thinking  [SEP confirmed/rejected with confidence and signals]
 
-thinking  classification result
-└─ after Stage 1 returns — either SEP candidate detected or OEP routing note
+  ── OEP path ──────────────────────────────────────────────────────────
+  thinking  "Building enrollment timeline from member history snapshots..."
+  agent_call  NormalEnrollmentAgent
+  thinking  [timeline summary — snapshot count, effective date]
 
-thinking  "Analysing what changed between snapshots..."   (SEP path)
-       OR "Building enrollment timeline from member history snapshots..."  (OEP path)
-└─ before Stage 2 LLM call (SepInferenceAgent or NormalEnrollmentAgent)
+thinking  [authority source — Employer vs Exchange/CMS]
 
-  [LLM call: SepInferenceAgent or NormalEnrollmentAgent]
+thinking  "Evaluating eligibility: checking validation issues..."
+agent_call  DecisionAgent
+thinking  [decision result — hard blocks, SEP evidence required, or clean path]
 
-thinking  branch analysis result
-└─ after Stage 2 returns — SEP confirmed/rejected, or timeline summary
+  ── SEP + evidence required only ──────────────────────────────────────
+  thinking  "Checking submitted documents against requirements for: <sep_type>..."
+  agent_call  EvidenceCheckAgent
+  thinking  [evidence result — docs verified or missing docs listed]
 
-thinking  authority source note
-└─ synchronous (no LLM) — fires immediately after Stage 2
-   notes whether source is Employer (payer discretion) or Exchange/CMS (regulatory)
+thinking  [final outcome message]
 
-thinking  "Evaluating eligibility: checking validation issues, blocking conditions..."
-└─ before Stage 4 LLM call (DecisionAgent)
-
-  [LLM call: DecisionAgent]
-
-thinking  decision result
-└─ after Stage 4 returns — hard blocks, SEP evidence required, or clean path
-
-thinking  "Checking submitted documents against requirements for: <sep_type>..."  (SEP + evidence required only)
-└─ before Stage 5 LLM call (EvidenceCheckAgent)
-
-  [LLM call: EvidenceCheckAgent]  (SEP path only)
-
-thinking  evidence check result  (SEP path only)
-└─ after Stage 5 returns — docs verified or missing docs listed
-
-thinking  "All checks passed. Enrolling member via standard OEP path."
-└─ after all stages complete, before MongoDB write
-
-  [MongoDB write — member status updated]
-
-member_result
-└─ after DB is updated
-   payload: { subscriber_id, name, status, summary }
+member_result  { subscriber_id, name, status, summary }
+pipeline_progress
 
 ── End of member loop ──────────────────────────────────────────────────
 
 done
-└─ after all members processed and batch marked Completed in MongoDB
-   payload: { batchId, processed, failed }
 ```
 
-### Notes
+**Possible statuses:** `Enrolled` / `Enrolled (SEP)` / `In Review` / `Processing Failed`
 
-- `thinking` events with `"-- "` prefix are member headers (used by the frontend to group steps per member).
-- Artificial delays of `0.05`–`0.1s` are added via `asyncio.sleep()` to pace the stream for readability.
-- Stage 3 (authority check) is synchronous — no LLM call, fires immediately.
-- Stage 5 (evidence check) only runs for SEP members where the Decision agent sets `requires_evidence_check: true`.
+---
+
+### Renewal pipeline
+
+Two-stage pipeline: deterministic math followed by LLM contextual judgment.
+
+```
+start
+
+── Per member ──────────────────────────────────────────────────────────
+
+thinking  "-- Starting pipeline for <Name> (<ID>)"
+thinking  "Analyzing renewal member record for premium changes..."
+thinking  "Extracting renewal coverage data from member record..."
+thinking  "Prior year coverage: Gross $X, APTC $X, Net $X"
+thinking  "Current year coverage: Gross $X, APTC $X, Net $X"
+
+agent_call  RenewalProcessorAgent  [Stage 1: deterministic math]
+thinking  "Calculating premium change: $X - $X = $X (+/-Y%)"
+thinking  "Deterministic priority: HIGH/MEDIUM/LOW — <threshold reason>"
+
+  ── If anomalies detected ─────────────────────────────────────────────
+  thinking  "⚠ Data anomaly: <flag description>"  (one per anomaly)
+
+agent_call  RenewalProcessorAgent  [Stage 2: LLM contextual judgment]
+thinking  "LLM confirmed priority: X — deterministic result stands."
+       OR "LLM override: HIGH → MEDIUM. <override_reason>"
+
+  ── If LLM unavailable ────────────────────────────────────────────────
+  thinking  "LLM reasoning unavailable (<error>), using deterministic result."
+
+  ── HIGH priority (In Review) ─────────────────────────────────────────
+  thinking  "HIGH-priority change requires specialist review..."
+  thinking  "Specialist note: <specialist_note>"  (if present)
+  thinking  "Flagging case for specialist review: $X (+/-Y%)"
+
+  ── MEDIUM/LOW priority (Enrolled) ────────────────────────────────────
+  thinking  "MEDIUM/LOW-priority change within acceptable range..."
+  thinking  "Verifying member eligibility and plan availability..."
+  thinking  "All eligibility checks passed. Approving renewal effective <date>."
+
+member_result  { subscriber_id, name, status, summary }
+pipeline_progress
+
+── End of member loop ──────────────────────────────────────────────────
+
+done
+```
+
+**Possible statuses:** `Enrolled` / `In Review` / `Processing Failed`
+
+**LLM override examples:**
+- MEDIUM → HIGH: delta % > 35% even if absolute delta < $50 (small plan, large relative change)
+- HIGH → MEDIUM: delta % < 10% and gross > $800 (large plan, small relative change)
+
+---
+
+### Retro Coverage pipeline
+
+Two-stage pipeline: deterministic liability calculation followed by LLM risk assessment.
+
+```
+start
+
+── Per member ──────────────────────────────────────────────────────────
+
+thinking  "-- Starting pipeline for <Name> (<ID>)"
+thinking  "Analyzing retroactive coverage member record..."
+thinking  "Extracting retroactive coverage data from member record..."
+thinking  "Retroactive effective date: <date>"
+thinking  "Monthly coverage: Gross $X, APTC $X, Member Responsibility $X"
+
+agent_call  RetroEnrollmentOrchestratorAgent  [Stage 1: deterministic]
+thinking  "Calculating retroactive period: From <date> to today = N month(s)"
+thinking  "Computing total retroactive liability: $X/month × N months = $X"
+thinking  "Verifying retroactive authorization and policy activation..."
+thinking  "Authorization verified. Policy activated retroactively to <date>."
+thinking  "Calculating month-by-month APTC reconciliation table for N month(s)..."
+thinking  "APTC table generated (N entries). CSR variant confirmed."
+
+  ── If anomalies detected ─────────────────────────────────────────────
+  thinking  "⚠ Data anomaly: <flag description>"  (one per anomaly)
+
+agent_call  RetroEnrollmentOrchestratorAgent  [Stage 2: LLM risk assessment]
+thinking  "Risk assessment: LOW/MEDIUM/HIGH risk [— <override_reason>]"
+thinking  "Compliance: <compliance_note>"  (if present)
+
+  ── Fully covered (liability == 0, Enrolled) ──────────────────────────
+  thinking  "Member fully covered by APTC for entire retroactive period."
+  thinking  "All retroactive coverage requirements satisfied. Approving."
+
+  ── Overpayment (liability < 0, In Review) ────────────────────────────
+  thinking  "Overpayment detected: Member paid $X more than owed."
+  thinking  "Flagging for specialist review: refund processing required."
+  thinking  "Specialist note: <specialist_note>"  (if present)
+
+  ── Member owes (liability > 0, In Review) ────────────────────────────
+  thinking  "Member liability identified: $X owed for retroactive period."
+  thinking  "Generating billing adjustment and confirmation 834..."
+  thinking  "Flagging for specialist review: 48-hour deadline."
+  thinking  "Specialist note: <specialist_note>"  (if present)
+
+  ── LLM override to Enrolled ──────────────────────────────────────────
+  thinking  "LLM approved enrollment: <override_reason>"
+
+member_result  { subscriber_id, name, status, summary }
+pipeline_progress
+
+── End of member loop ──────────────────────────────────────────────────
+
+done
+```
+
+**Possible statuses:** `Enrolled` / `In Review` / `Processing Failed`
+
+**LLM override examples:**
+- In Review → Enrolled: liability > 0 but total < $50, period ≤ 3 months, no anomalies
+- Enrolled → In Review: liability == 0 but period > 6 months, or APTC > gross, or gross == 0
 
 ---
 
 ## AI Assistant — Chat Stream
 
 **Endpoint:** `POST /api/assistant/chat/llm`  
-**Implementation:** `stream_chat_response()` in `server/ai/chat_agent.py`
+**Implementation:** `stream_chat_response()` in `server/ai/chat/stream.py`
 
-Runs an agentic tool-calling loop (up to 8 rounds). The LLM decides which tools to call and how many rounds are needed, so the event sequence varies per query. If `process_batch` is called, the full batch stream (same as above) is drained inline.
-
-### Event sequence
+Runs an agentic tool-calling loop (up to 8 rounds). The LLM decides which tools to call. If `process_batch` is called, the full batch stream is drained inline.
 
 ```
-thinking  "Received your message — routing to orchestrator..."
-└─ fires immediately, before the first LLM call
+thinking  "Received your message — understanding your request..."
+thinking  "Deciding what action to take..."
 
-thinking  "Orchestrator analysing intent and selecting tool..."
-└─ before round 0 LLM call
-
-  [LLM call — model decides: tool_call or final response]
+  [LLM call — decides: tool_call or final response]
 
 ── If LLM calls a tool (repeats up to 8 rounds) ───────────────────────
 
-thinking  "Orchestrator dispatching → <tool name>"
-└─ after LLM responds with a tool_call decision
+thinking  "Action: <tool label>"
+thinking  "<pre-execution description>"
+thinking  "<exec message>"
 
-thinking  "Tool: <tool_name> — <description>"
-thinking  "<human-readable exec message>"
-└─ two pre-execution thinking events, one technical and one plain-English
-
-  [tool function executes]
+  [tool executes]
 
   ── If tool is process_batch ──────────────────────────────────────────
-  │  The batch queue is drained inline — all per-member thinking and
-  │  member_result events flow through exactly as in the Release Staging
-  │  stream above.
+  │  Full batch stream drained inline — all thinking, agent_call,
+  │  member_result events flow through exactly as above.
   │
-  │  status_update
-  │  └─ after batch drain completes
-  │     payload: { message, details: { batchId, processed, failed } }
+  │  status_update  { message, details: { batchId, processed, failed } }
   └─────────────────────────────────────────────────────────────────────
 
-thinking  "Orchestrator reviewing tool result (round N)..."
-└─ before each subsequent LLM round
+status_update  { message, details }   (non-batch tools)
+thinking  "Reviewing results and deciding next step..."
 
-  [LLM call — model decides: another tool_call or final response]
+  [LLM call — next round]
 
-── When LLM decides to stop calling tools ─────────────────────────────
+── When LLM stops calling tools ───────────────────────────────────────
 
-thinking  "Orchestrator composing final response..."
-└─ LLM is about to produce its text answer
+thinking  "Preparing response..."
+  [LLM final text generation]
 
-  [LLM call — final text generation]
-
-response
-└─ the LLM's final answer
-   payload: { message, suggestions }
+response  { message, suggestions }
 
 done
-└─ stream end signal
 ```
 
-### Event types summary
+---
 
-| Type | Surface | Description |
-|---|---|---|
-| `start` | Release Staging | Stream opened, member count known |
-| `thinking` | Both | Progress signal — before/after each LLM call or stage |
-| `member_result` | Both | Single member pipeline complete with final status |
-| `status_update` | AI Assistant | Batch drain complete, carries aggregate counts |
-| `response` | AI Assistant | LLM's final text answer with suggestions |
-| `done` | Both | Stream closed |
-
-### Key differences
+## Key differences between surfaces
 
 | | Release Staging | AI Assistant |
 |---|---|---|
-| Event sequence | Fixed — same stages every time | Non-deterministic — LLM decides tool rounds |
-| `thinking` source | Hardcoded strings in `_run_batch_streaming` | Mix of hardcoded orchestrator messages + per-tool labels |
-| Batch processing | Primary purpose | Inline, triggered when LLM calls `process_batch` |
+| Event sequence | Fixed per pipeline | Non-deterministic (LLM decides rounds) |
+| `thinking` source | Hardcoded pipeline strings | Mix of orchestrator messages + tool labels |
+| Batch processing | Primary purpose | Inline, triggered by `process_batch` tool |
 | Final output | `done` with counts | `response` with LLM text + suggestions |
-| Artificial delays | Yes (`0.05`–`0.1s` per event) | No — events fire as fast as LLM responds |
+| Artificial delays | Yes (0.05–0.1s per event) | No — events fire as fast as LLM responds |
+| LLM calls per member | 2 (renewal/retro) or 3–5 (OEP/SEP) | Varies (1–8 rounds total) |

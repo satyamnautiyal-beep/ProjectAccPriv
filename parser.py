@@ -29,6 +29,9 @@ def parse_edi(edi_text):
     current_transaction = None
     current_subscriber = None
     current_member = None
+    
+    # Store renewal signals that appear before INS segment
+    pending_renewal_signals = {}
 
     employer = {}
     insurer = {}
@@ -126,8 +129,10 @@ def parse_edi(edi_text):
                     **employer,
                     **insurer
                 },
-                "coverages": []
+                "coverages": [],
+                "_pending_ref": pending_renewal_signals.copy()  # Apply any pending renewal signals
             }
+            pending_renewal_signals = {}  # Reset for next member
 
         elif seg_id == "REF" and len(elements) > 2:
             if elements[1] == "38" and current_transaction:
@@ -136,6 +141,13 @@ def parse_edi(edi_text):
                 current_transaction["transaction_metadata"]["insurer_group_id"] = elements[2]
             elif elements[1] == "0F" and current_member:
                 current_member["member_info"]["subscriber_id"] = elements[2]
+            
+            # NEW: Renewal-specific REF codes - store in pending until member is created
+            elif elements[1] == "1L":  # Prior year APTC
+                pending_renewal_signals["prior_aptc"] = elements[2]
+            
+            elif elements[1] == "1M":  # Prior year premium
+                pending_renewal_signals["prior_gross_premium"] = elements[2]
 
         elif seg_id == "NM1" and current_member and len(elements) > 4:
             if elements[1] in ("IL", "03"):
@@ -161,12 +173,24 @@ def parse_edi(edi_text):
         # ===================== COVERAGE =====================
 
         elif seg_id == "HD" and current_member:
-            current_member["coverages"].append({
+            coverage = {
                 "coverage_type": elements[1] if len(elements) > 1 else None,
                 "plan_code": elements[3] if len(elements) > 3 else None,
                 "coverage_start_date": None,
-                "coverage_end_date": None
-            })
+                "coverage_end_date": None,
+                # NEW: Renewal-specific fields
+                "gross_premium": None,
+                "aptc": None,
+                "prior_gross_premium": None,
+                "prior_aptc": None
+            }
+            # Apply any pending REF values (renewal signals from earlier in the file)
+            if current_member.get("_pending_ref"):
+                for key, value in current_member["_pending_ref"].items():
+                    coverage[key] = value
+                current_member["_pending_ref"] = {}
+            
+            current_member["coverages"].append(coverage)
 
         elif seg_id == "DTP" and len(elements) > 3:
             if elements[1] == "348" and current_member and current_member["coverages"]:
@@ -177,6 +201,36 @@ def parse_edi(edi_text):
 
             elif elements[1] == "303" and current_transaction:
                 current_transaction["transaction_metadata"]["effective_date"] = format_date(elements[3])
+
+        # ===================== RENEWAL-SPECIFIC: AMOUNTS =====================
+
+        elif seg_id == "AMT" and current_member and len(elements) > 2:
+            """
+            AMT segment contains monetary amounts.
+            Qualifier codes:
+            - B9 = APTC (Advanced Premium Tax Credit)
+            - B10 = Net premium (member responsibility after APTC)
+            - AAE = Gross premium
+            - AAD = Prior year gross premium
+            """
+            if current_member["coverages"]:
+                coverage = current_member["coverages"][-1]
+                
+                if elements[1] == "B9":  # Current APTC
+                    coverage["aptc"] = elements[2] if len(elements) > 2 else None
+                
+                elif elements[1] == "B10":  # Current net premium (member responsibility)
+                    # Net premium = Gross premium - APTC
+                    # So: Gross premium = Net premium + APTC
+                    net_premium = float(elements[2]) if len(elements) > 2 else 0
+                    aptc = float(coverage.get("aptc") or 0)
+                    coverage["gross_premium"] = str(net_premium + aptc)
+                
+                elif elements[1] == "AAE":  # Current gross premium
+                    coverage["gross_premium"] = elements[2] if len(elements) > 2 else None
+                
+                elif elements[1] == "AAD":  # Prior year gross premium
+                    coverage["prior_gross_premium"] = elements[2] if len(elements) > 2 else None
 
     # ===================== FINAL FLUSH =====================
 

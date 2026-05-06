@@ -1,125 +1,147 @@
 'use client';
 
-import React from 'react';
-import { AlertTriangle, Clock, ShieldCheck, Mail } from 'lucide-react';
+import React, { useMemo, Suspense } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
+import AlertCard from '@/components/AlertCard';
+import FilterBar from '@/components/FilterBar';
+import SearchBar from '@/components/SearchBar';
+import PaginationControls from '@/components/PaginationControls';
+import { useFilters } from '@/hooks/useFilters';
+import { usePagination } from '@/hooks/usePagination';
+import { useSearch } from '@/hooks/useSearch';
+import { renewalAPI } from '@/lib/apiClient';
 import styles from './renewals.module.css';
-import Annotation from '../../components/Annotation';
 
-const renewalData = [
-  { id: 'REN-102', name: 'Alfonso Rivera', plan: 'Gold Plus', deadline: '2026-10-31', daysLeft: 5, completion: 40 },
-  { id: 'REN-103', name: 'Betty Smith', plan: 'Silver Base', deadline: '2026-11-02', daysLeft: 7, completion: 80 },
-  { id: 'REN-104', name: 'Charles Mingus', plan: 'Bronze Lite', deadline: '2026-11-15', daysLeft: 20, completion: 15 },
-  { id: 'REN-105', name: 'Diana Ross', plan: 'Gold Plus', deadline: '2026-11-20', daysLeft: 25, completion: 100 },
-];
+function RenewalsContent() {
+  const router = useRouter();
+  const { filters, updateFilter, clearFilters } = useFilters({});
+  const { searchQuery, debouncedQuery, updateSearch, clearSearch, filterItems } = useSearch();
 
-export default function Renewals() {
+  // Fetch alerts
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['renewalAlerts', filters, debouncedQuery],
+    queryFn: () => renewalAPI.getAlerts(filters),
+    refetchInterval: 5000,
+  });
+
+  const alerts = data?.alerts || [];
+
+  // Filter by search
+  const filteredAlerts = useMemo(
+    () => filterItems(alerts, ['member_name', 'case_id']),
+    [alerts, debouncedQuery]
+  );
+
+  // Pagination
+  const { paginatedItems, currentPage, totalPages, goToPage } = usePagination(
+    filteredAlerts,
+    20
+  );
+
+  const handleAlertClick = (caseId) => {
+    router.push(`/renewals/${caseId}`);
+  };
+
   return (
     <div className={styles.container}>
-      <header className={styles.header}>
-        <h1 className={styles.title}>Renewals & Updates</h1>
-      </header>
-
-      <Annotation
-        title="Urgency Metrics"
-        what="Topline cards summarizing immediate action items based on deadlines."
-        why="Renewals are time-sensitive. Visualizing approaching deadlines prevents coverage lapses."
-        how="Using universally understood warning colors (Yellow, Red) for escalating urgency."
-      >
-        <div className={styles.metricsGrid}>
-          <div className={styles.metricCard}>
-            <div className={styles.metricInfo}>
-              <span className={styles.metricLabel}>Due &lt; 7 Days</span>
-              <span className={styles.metricValue}>14</span>
-            </div>
-            <div className={`${styles.metricIcon} ${styles.danger}`}>
-              <AlertTriangle size={24} />
-            </div>
+      {/* Header */}
+      <div className={styles.header}>
+        <div>
+          <h1 className={styles.title}>Premium Change Alerts</h1>
+          <p className={styles.subtitle}>
+            Review and manage renewal premium change alerts
+          </p>
+        </div>
+        <div className={styles.stats}>
+          <div className={styles.stat}>
+            <span className={styles.statLabel}>Total Alerts</span>
+            <span className={styles.statValue}>{alerts.length}</span>
           </div>
-          
-          <div className={styles.metricCard}>
-            <div className={styles.metricInfo}>
-              <span className={styles.metricLabel}>Due &lt; 30 Days</span>
-              <span className={styles.metricValue}>86</span>
-            </div>
-            <div className={`${styles.metricIcon} ${styles.warning}`}>
-              <Clock size={24} />
-            </div>
-          </div>
-          
-          <div className={styles.metricCard}>
-            <div className={styles.metricInfo}>
-              <span className={styles.metricLabel}>Successfully Renewed</span>
-              <span className={styles.metricValue}>1,204</span>
-            </div>
-            <div className={`${styles.metricIcon} ${styles.primary}`}>
-              <ShieldCheck size={24} />
-            </div>
+          <div className={styles.stat}>
+            <span className={styles.statLabel}>High Priority</span>
+            <span className={styles.statValue} style={{ color: '#dc2626' }}>
+              {alerts.filter(a => a.priority === 'HIGH').length}
+            </span>
           </div>
         </div>
-      </Annotation>
+      </div>
 
-      <Annotation
-        title="Deadline Tracking Table"
-        what="A list view of upcoming renewals with visual progress indicators."
-        why="Workers need to know exactly how complete a renewal packet is without opening it."
-        how="Injecting mini horizontal progress bars and color-coded text to indicate 'Days Left'."
-      >
-        <div className={styles.tableContainer}>
-          <div className={styles.tableHeader}>
-            <span className={styles.tableTitle}>Upcoming Deadlines</span>
-          </div>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Member</th>
-                <th>Plan Tier</th>
-                <th>Deadline</th>
-                <th>Days Left</th>
-                <th>Packet Completion</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {renewalData.map((row) => {
-                const urgencyClass = row.daysLeft <= 7 ? styles.danger : row.daysLeft <= 14 ? styles.warning : styles.safe;
-                
-                return (
-                  <tr key={row.id}>
-                    <td>
-                      <div><strong>{row.name}</strong></div>
-                      <div style={{fontSize: '0.8rem', color: 'var(--text-muted)'}}>{row.id}</div>
-                    </td>
-                    <td>{row.plan}</td>
-                    <td>{row.deadline}</td>
-                    <td>
-                      <span className={`${styles.daysLeft} ${urgencyClass}`}>
-                        {row.daysLeft} days
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '2px'}}>
-                        <span>{row.completion}%</span>
-                        {row.completion === 100 && <span style={{color: 'var(--success)'}}>Ready</span>}
-                      </div>
-                      <div className={styles.progressBar}>
-                        <div 
-                          className={`${styles.progressFill} ${row.completion < 50 ? styles.danger : row.completion < 100 ? styles.warning : ''}`} 
-                          style={{ width: `${row.completion}%` }}
-                        ></div>
-                      </div>
-                    </td>
-                    <td>
-                      <button className={styles.actionButton}>
-                        {row.completion === 100 ? 'Process' : 'Remind'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {/* Search and Filters */}
+      <div className={styles.controls}>
+        <SearchBar
+          placeholder="Search by member name or case ID..."
+          value={searchQuery}
+          onChange={updateSearch}
+          onClear={clearSearch}
+        />
+
+        <FilterBar
+          filters={filters}
+          onFilterChange={updateFilter}
+          onClearFilters={clearFilters}
+          filterOptions={{
+            priority: {
+              label: 'Priority',
+              values: ['HIGH', 'MEDIUM', 'LOW'],
+            },
+            status: {
+              label: 'Status',
+              values: ['AWAITING_SPECIALIST', 'IN_PROGRESS', 'COMPLETED', 'FAILED'],
+              format: (v) => v.replace(/_/g, ' '),
+            },
+          }}
+        />
+      </div>
+
+      {/* Alerts List */}
+      {isLoading ? (
+        <div className={styles.loading}>
+          <div className={styles.spinner} />
+          <p>Loading alerts...</p>
         </div>
-      </Annotation>
+      ) : error ? (
+        <div className={styles.error}>
+          <p>Error loading alerts. Please try again.</p>
+        </div>
+      ) : paginatedItems.length === 0 ? (
+        <div className={styles.empty}>
+          <p>
+            {alerts.length === 0
+              ? 'No alerts found. Upload renewal files to get started.'
+              : 'No alerts match your filters.'}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className={styles.alertsList}>
+            {paginatedItems.map((alert) => (
+              <AlertCard
+                key={alert.case_id}
+                alert={alert}
+                onClick={() => handleAlertClick(alert.case_id)}
+                showDetails={true}
+              />
+            ))}
+          </div>
+
+          <PaginationControls
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={goToPage}
+            itemsPerPage={20}
+            totalItems={filteredAlerts.length}
+          />
+        </>
+      )}
     </div>
+  );
+}
+
+export default function RenewalsPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <RenewalsContent />
+    </Suspense>
   );
 }

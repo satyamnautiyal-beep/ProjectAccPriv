@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from server.routers import files, members, clarifications, batches, metrics, auth
+from server.routers import files, members, clarifications, batches, metrics, auth, renewals, retro_enrollments
 
 app = FastAPI()
 
@@ -23,3 +23,5 @@ app.include_router(clarifications.router)
 app.include_router(batches.router)
 app.include_router(metrics.router)
 app.include_router(auth.router)
+app.include_router(renewals.router)
+app.include_router(retro_enrollments.router)

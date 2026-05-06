@@ -232,4 +232,238 @@ TOOLS = [
             },
         },
     },
+    # ===================== RENEWAL & RETRO TOOLS =====================
+    {
+        "type": "function",
+        "function": {
+            "name": "process_renewal_834",
+            "description": (
+                "Process renewal 834 EDI file and create premium change alerts. "
+                "Parses the EDI file, calculates premium deltas, classifies priority (HIGH/MEDIUM/LOW), "
+                "and creates alert cases in the database. "
+                "Use this when the user wants to process a renewal 834 file or upload renewal data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "edi_text": {
+                        "type": "string",
+                        "description": "The EDI 834 file content (renewal data).",
+                    },
+                    "batch_id": {
+                        "type": "string",
+                        "description": "Optional batch ID for tracking. Auto-generated if not provided.",
+                    },
+                    "file_name": {
+                        "type": "string",
+                        "description": "Optional file name for reference.",
+                    },
+                },
+                "required": ["edi_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_premium_alerts",
+            "description": (
+                "Get list of premium change alerts with optional filtering by priority and status. "
+                "Returns alerts with member info, premium analysis, and current status. "
+                "Use this when the user asks about premium alerts, high-priority changes, or alert status."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "priority": {
+                        "type": "string",
+                        "description": "Filter by priority: HIGH, MEDIUM, LOW. Leave empty for all.",
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Filter by status: AWAITING_SPECIALIST, RESOLVED, REJECTED. Leave empty for all.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of alerts to return (default: 50).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "approve_premium_alert",
+            "description": (
+                "Approve and send premium change alert communication to member, or hold/reject the alert. "
+                "Actions: 'send' (send communication), 'hold' (hold for review), 'reject' (reject alert). "
+                "Use this when the user wants to approve, hold, or reject a specific premium alert."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "case_id": {
+                        "type": "string",
+                        "description": "The case ID of the premium alert (e.g. REN-20260505-001).",
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": "Action to take: 'send', 'hold', or 'reject'.",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Optional notes from specialist.",
+                    },
+                },
+                "required": ["case_id", "action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_retro_case",
+            "description": (
+                "Create retroactive enrollment case with authorization verification. "
+                "Verifies authorization source (HICS case ID or internal flag), orchestrates 5-step workflow, "
+                "calculates retroactive APTC, and tracks 48-hour confirmation deadline. "
+                "Use this when the user wants to create a retroactive enrollment case for a member."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "member_id": {
+                        "type": "string",
+                        "description": "Member ID (e.g. SUB-12345).",
+                    },
+                    "retro_effective_date": {
+                        "type": "string",
+                        "description": "Retroactive effective date (YYYY-MM-DD format).",
+                    },
+                    "auth_source": {
+                        "type": "string",
+                        "description": "Authorization source (HICS case ID like HICS-2025-91044 or internal flag).",
+                    },
+                    "member_name": {
+                        "type": "string",
+                        "description": "Optional member name.",
+                    },
+                    "member_dob": {
+                        "type": "string",
+                        "description": "Optional member DOB (YYYY-MM-DD).",
+                    },
+                    "member_state": {
+                        "type": "string",
+                        "description": "Optional member state.",
+                    },
+                },
+                "required": ["member_id", "retro_effective_date", "auth_source"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_retro_case",
+            "description": (
+                "Get details of a specific retroactive enrollment case including steps completed, "
+                "current step, APTC table, and activity log. "
+                "Use this when the user asks about a specific retro case or its progress."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "case_id": {
+                        "type": "string",
+                        "description": "The case ID of the retro case (e.g. RET-20260505-001).",
+                    },
+                },
+                "required": ["case_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "confirm_retro_step",
+            "description": (
+                "Confirm completion of a retroactive enrollment step and move to the next step. "
+                "Tracks step progression through the 5-step workflow and maintains audit trail. "
+                "Use this when the user wants to confirm a step is complete (e.g., confirmation 834 sent)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "case_id": {
+                        "type": "string",
+                        "description": "The case ID of the retro case (e.g. RET-20260505-001).",
+                    },
+                    "step_id": {
+                        "type": "string",
+                        "description": "The step ID to confirm (e.g. CONFIRMATION_834).",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Optional notes about the step completion.",
+                    },
+                },
+                "required": ["case_id", "step_id"],
+            },
+        },
+    },
+    # ===================== UNIFIED INTAKE PIPELINE =====================
+    {
+        "type": "function",
+        "function": {
+            "name": "process_file_intake",
+            "description": (
+                "Process a file through the unified intake pipeline. "
+                "Chains validators (subscriber onboard, structure, business, classification) "
+                "and routes to appropriate downstream agent (renewal, retro, or enrollment). "
+                "Returns case_id for tracking. Use this when the user wants to process a new file "
+                "or upload EDI data for intake."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_content": {
+                        "type": "string",
+                        "description": "The EDI file content (e.g., ISA*00*...). Required.",
+                    },
+                    "file_name": {
+                        "type": "string",
+                        "description": "Optional file name for reference (e.g., renewal_834.edi).",
+                    },
+                    "subscriber_id": {
+                        "type": "string",
+                        "description": "Optional subscriber ID. Auto-generated if not provided.",
+                    },
+                },
+                "required": ["file_content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_intake_status",
+            "description": (
+                "Check the status of a file intake case. Returns current status (processing, completed, failed), "
+                "file classification, routing target, and result or error. "
+                "Use this when the user asks about intake progress or wants to check a case result."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "case_id": {
+                        "type": "string",
+                        "description": "The intake case ID (e.g., INT-20260506-001). Required.",
+                    }
+                },
+                "required": ["case_id"],
+            },
+        },
+    },
 ]

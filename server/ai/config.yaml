@@ -1,3 +1,7 @@
+# ── OEP / SEP Enrollment Pipeline ────────────────────────────────────────────
+# Entry point: EnrollmentRouterAgent
+# Workflow:    enrollment_pipeline.py → _run_enrollment_streaming
+
 utility_agents:
   - agent_class: CustomAgent
     agent_name: EnrollmentClassifierAgent
@@ -24,13 +28,42 @@ utility_agents:
       Returns ONLY JSON.
 
   - agent_class: CustomAgent
+    agent_name: EvidenceCheckAgent
+    agent_description: >
+      Verifies submitted documents against SEP requirements.
+      Returns ONLY JSON.
+
+  - agent_class: CustomAgent
     agent_name: EnrollmentRouterAgent
     agent_description: >
-      Deterministic router: calls EnrollmentClassifierAgent then routes to SepInferenceAgent or
-      NormalEnrollmentAgent, then calls DecisionAgent and returns final JSON.
+      Master OEP/SEP orchestrator: Classifier → SEP/Normal branch → Decision → Evidence check.
+      Returns ONLY JSON.
+
+# ── Renewal Pipeline ──────────────────────────────────────────────────────────
+# Entry point: RenewalProcessorAgent
+# Workflow:    renewal_pipeline.py → run_renewal_batch_streaming
+
+  - agent_class: CustomAgent
+    agent_name: RenewalProcessorAgent
+    agent_description: >
+      Processes renewal members. Extracts prior/current coverage, calculates premium delta,
+      classifies priority (HIGH/MEDIUM/LOW), and determines outcome status.
+      Returns ONLY JSON.
+
+# ── Retro Coverage Pipeline ───────────────────────────────────────────────────
+# Entry point: RetroEnrollmentOrchestratorAgent
+# Workflow:    retro_pipeline.py → run_retro_batch_streaming
+
+  - agent_class: CustomAgent
+    agent_name: RetroEnrollmentOrchestratorAgent
+    agent_description: >
+      Processes retroactive coverage members. Calculates retroactive period, total liability,
+      builds APTC reconciliation table, and determines outcome status.
       Returns ONLY JSON.
 
 orchestrator:
   agent_list:
     - agent_name: EnrollmentRouterAgent
+    - agent_name: RenewalProcessorAgent
+    - agent_name: RetroEnrollmentOrchestratorAgent
   enable_routing: false
