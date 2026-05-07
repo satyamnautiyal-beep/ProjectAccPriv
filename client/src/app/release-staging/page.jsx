@@ -1,9 +1,10 @@
 ﻿'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import styles from './release-staging.module.css';
 import {
-  Package, X, Send, ShieldCheck, AlertCircle, CheckCircle2,
+  Package, X, Send, ShieldCheck, AlertCircle, CheckCircle2, ChevronRight, BarChart2,
   Cpu, Zap, TrendingUp, Clock, AlertTriangle,
   Brain, Calculator, FileCheck,
 } from 'lucide-react';
@@ -13,6 +14,16 @@ import useUIStore from '@/store/uiStore';
 // ---------------------------------------------------------------------------
 // Pipeline config
 // ---------------------------------------------------------------------------
+/** Today's date as YYYY-MM-DD */
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+/** True if a batch was completed today */
+const isCompletedToday = (batch) => {
+  const ts = batch.completedAt || batch.createdAt || '';
+  return ts.slice(0, 10) === todayStr();
+};
+
+// Pipeline type config
 const PIPELINE_CONFIG = {
   ENROLLMENT: {
     label: 'Enrollment',
@@ -435,9 +446,27 @@ function PipelineTab({ pipelineType, batches, isLoading, onSelectBatch, activeBa
   const cfg = getPipelineConfig(pipelineType);
   const typeBatches = batches.filter(b => (b.pipelineType || 'ENROLLMENT').toUpperCase() === pipelineType);
 
+  // Split into pending (non-completed) and completed
+  const pendingBatches = typeBatches
+    .filter(b => b.status !== 'Completed')
+    // LIFO: newest uploaded first
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  // Completed batches: only show today's; for RETRO_COVERAGE sort by completedAt desc
+  const completedBatches = typeBatches
+    .filter(b => b.status === 'Completed' && isCompletedToday(b))
+    .sort((a, b) => {
+      const tsA = a.completedAt || a.createdAt || '';
+      const tsB = b.completedAt || b.createdAt || '';
+      return tsB.localeCompare(tsA); // newest first for all types
+    });
+
+  // Final display order: pending (LIFO) → completed today
+  const displayBatches = [...pendingBatches, ...completedBatches];
+
   if (isLoading) return <div className={styles.emptyState}>Loading batches...</div>;
 
-  if (typeBatches.length === 0) {
+  if (displayBatches.length === 0) {
     return (
       <div className={styles.emptyState}>
         <Package size={40} color="var(--border)" />
@@ -449,7 +478,7 @@ function PipelineTab({ pipelineType, batches, isLoading, onSelectBatch, activeBa
 
   return (
     <div className={styles.batchGrid} style={{ paddingRight: activeBatchId ? '420px' : 0 }}>
-      {typeBatches.map(batch => {
+      {displayBatches.map(batch => {
         const isRunning = runningBatchIds?.includes(batch.id);
         return (
           <div
@@ -492,17 +521,19 @@ function PipelineTab({ pipelineType, batches, isLoading, onSelectBatch, activeBa
 // Main Page
 // ---------------------------------------------------------------------------
 export default function ReleaseStagingPage() {
-  const [activeBatchId, setActiveBatchId]           = useState(null);
-  const [showConfirm, setShowConfirm]               = useState(false);
-  const [showPanel, setShowPanel]                   = useState(false);
-  const [panelBatchId, setPanelBatchId]             = useState(null);
-  const [panelMemberCount, setPanelMemberCount]     = useState(0);
-  const [panelPipelineType, setPanelPipelineType]   = useState('ENROLLMENT');
-  const [panelReconnect, setPanelReconnect]         = useState(false);
-  const [activeTab, setActiveTab]                   = useState('ENROLLMENT');
+  const router = useRouter();
+  const [activeBatchId, setActiveBatchId]         = useState(null);
+  const [showConfirm, setShowConfirm]             = useState(false);
+  const [showPanel, setShowPanel]                 = useState(false);
+  const [panelBatchId, setPanelBatchId]           = useState(null);
+  const [panelMemberCount, setPanelMemberCount]   = useState(0);
+  const [panelPipelineType, setPanelPipelineType] = useState('ENROLLMENT');
+  const [panelReconnect, setPanelReconnect]       = useState(false);
+  const [activeTab, setActiveTab]                 = useState('ENROLLMENT');
 
   const {
     runningBatchIds, addRunningBatch, removeRunningBatch,
+    saveProcessedBatch,
   } = useUIStore();
   const queryClient = useQueryClient();
 
@@ -524,7 +555,21 @@ export default function ReleaseStagingPage() {
         removeRunningBatch(id);
       }
     });
-  }, [batches, runningBatchIds, removeRunningBatch]);
+    // Also persist any completed batches from the API that aren't in the store yet
+    batches
+      .filter(b => b.status === 'Completed')
+      .forEach(b => {
+        saveProcessedBatch({
+          batchId: b.id,
+          pipelineType: b.pipelineType || b.pipeline_type || 'ENROLLMENT',
+          membersCount: b.membersCount || 0,
+          processedCount: b.processedCount ?? b.membersCount ?? 0,
+          failedCount: b.failedCount || 0,
+          completedAt: b.completedAt || b.createdAt || new Date().toISOString(),
+          createdAt: b.createdAt || new Date().toISOString(),
+        });
+      });
+  }, [batches, runningBatchIds, removeRunningBatch, saveProcessedBatch]);
 
   const generateBatchMutation = useMutation({
     mutationFn: async () => {
@@ -563,6 +608,22 @@ export default function ReleaseStagingPage() {
     queryClient.invalidateQueries({ queryKey: ['batches'] });
   };
 
+  const handleStateUpdate = useCallback((state) => {
+    if (state.phase === 'done') {
+      removeRunningBatch(state.batchId);
+      // Persist to processedBatches for Insights page
+      const batch = batches.find(b => b.id === state.batchId);
+      saveProcessedBatch({
+        batchId: state.batchId,
+        pipelineType: state.pipelineType || 'ENROLLMENT',
+        membersCount: state.memberCount || panelMemberCount,
+        processedCount: state.processed || 0,
+        failedCount: state.failed || 0,
+        completedAt: new Date().toISOString(),
+        createdAt: batch?.createdAt || new Date().toISOString(),
+      });
+    }
+  }, [removeRunningBatch, saveProcessedBatch, batches, panelMemberCount]);
   const counts = {
     ENROLLMENT:    batches.filter(b => (b.pipelineType || 'ENROLLMENT').toUpperCase() === 'ENROLLMENT').length,
     RENEWAL:       batches.filter(b => (b.pipelineType || '').toUpperCase() === 'RENEWAL').length,
@@ -586,14 +647,24 @@ export default function ReleaseStagingPage() {
             Finalize reviewed records and release batches to the appropriate enrollment pipeline.
           </p>
         </div>
-        <button
-          className={styles.btnPrimary}
-          onClick={() => generateBatchMutation.mutate()}
-          disabled={generateBatchMutation.isPending}
-        >
-          <Package size={16} />
-          {generateBatchMutation.isPending ? 'Bundling...' : 'Generate Batch'}
-        </button>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button
+            className={styles.btnSecondary}
+            onClick={() => router.push('/insights')}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+          >
+            <BarChart2 size={16} />
+            View Processed Batch
+          </button>
+          <button
+            className={styles.btnPrimary}
+            onClick={() => generateBatchMutation.mutate()}
+            disabled={generateBatchMutation.isPending}
+          >
+            <Package size={16} />
+            {generateBatchMutation.isPending ? 'Bundling...' : 'Generate Batch'}
+          </button>
+        </div>
       </div>
 
       {/* Pipeline Tabs */}

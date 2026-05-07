@@ -62,7 +62,8 @@ function ClassBadge({ classification }) {
 }
 
 // ---------------------------------------------------------------------------
-// Status Badge
+// Status Badge — display labels are localized to this page only
+// Internal status values (Ready / Awaiting Clarification) are unchanged
 // ---------------------------------------------------------------------------
 function StatusBadge({ status }) {
   if (status === 'Ready') {
@@ -73,7 +74,7 @@ function StatusBadge({ status }) {
         fontSize: '0.75rem', fontWeight: 600,
         backgroundColor: 'var(--success-light)', color: 'var(--success)',
       }}>
-        <ShieldCheck size={12} /> Ready
+        <ShieldCheck size={12} /> In Queue
       </span>
     );
   }
@@ -85,7 +86,7 @@ function StatusBadge({ status }) {
         fontSize: '0.75rem', fontWeight: 600,
         backgroundColor: 'var(--warning-light, #fef3c7)', color: 'var(--warning, #d97706)',
       }}>
-        <AlertTriangle size={12} /> Awaiting Clarification
+        <AlertTriangle size={12} /> Classified
       </span>
     );
   }
@@ -211,8 +212,8 @@ export default function ClassifierPage() {
       {/* ── KPI Cards ───────────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
         {[
-          { label: 'Ready', value: stats.ready, icon: <ShieldCheck size={18} />, color: 'var(--success)' },
-          { label: 'Awaiting Clarification', value: stats.clarification, icon: <AlertTriangle size={18} />, color: 'var(--warning, #d97706)' },
+          { label: 'In Queue',   value: stats.ready,         icon: <ShieldCheck size={18} />, color: 'var(--success)' },
+          { label: 'Classified', value: stats.clarification, icon: <AlertTriangle size={18} />, color: 'var(--warning, #d97706)' },
           { label: 'Not Enough Info', value: stats.notEnoughInfo, icon: <AlertCircle size={18} />, color: '#f59e0b' },
         ].map(({ label, value, icon, color }) => (
           <div key={label} className={styles.kpiCard}>
@@ -287,19 +288,24 @@ export default function ClassifierPage() {
         </div>
 
         <div style={{ display: 'flex', gap: '6px' }}>
-          {['All', 'Ready', 'Awaiting Clarification', 'Not Enough Info'].map(s => (
+          {[
+            { internal: 'All',                    display: 'All' },
+            { internal: 'Ready',                  display: 'In Queue' },
+            { internal: 'Awaiting Clarification', display: 'Classified' },
+            { internal: 'Not Enough Info',        display: 'Not Enough Info' },
+          ].map(({ internal, display }) => (
             <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
+              key={internal}
+              onClick={() => setStatusFilter(internal)}
               style={{
                 padding: '7px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                fontSize: '0.82rem', fontWeight: statusFilter === s ? 600 : 400,
-                backgroundColor: statusFilter === s ? 'var(--primary)' : 'var(--bg-surface)',
-                color: statusFilter === s ? '#fff' : 'var(--text-muted)',
-                outline: statusFilter === s ? 'none' : '1px solid var(--border)',
+                fontSize: '0.82rem', fontWeight: statusFilter === internal ? 600 : 400,
+                backgroundColor: statusFilter === internal ? 'var(--primary)' : 'var(--bg-surface)',
+                color: statusFilter === internal ? '#fff' : 'var(--text-muted)',
+                outline: statusFilter === internal ? 'none' : '1px solid var(--border)',
               }}
             >
-              {s}
+              {display}
             </button>
           ))}
         </div>

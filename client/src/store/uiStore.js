@@ -103,8 +103,29 @@ const useUIStore = create(
           }),
         })),
 
-      // --- Completed batch run logs ---
-      // Keyed by batchId. Each entry: { batchId, events, processed, failed, phase, memberCount }
+      // --- Processed batch tracking (persisted, for Insights page) ---
+      // Each entry: { batchId, pipelineType, membersCount, processedCount, failedCount, completedAt, createdAt }
+      processedBatches: [],
+
+      saveProcessedBatch: (batch) =>
+        set((state) => {
+          // Avoid duplicates — update if already exists
+          const exists = state.processedBatches.find((b) => b.batchId === batch.batchId);
+          if (exists) {
+            return {
+              processedBatches: state.processedBatches.map((b) =>
+                b.batchId === batch.batchId ? { ...b, ...batch } : b
+              ),
+            };
+          }
+          return { processedBatches: [batch, ...state.processedBatches] };
+        }),
+
+      // --- Completed batch day-tracking (for auto-cleanup in Release Staging) ---
+      completedBatchDate: null,
+      setCompletedBatchDate: (date) => set({ completedBatchDate: date }),
+
+      // --- Completed batch run logs (keyed by batchId) ---
       // Persisted so "View run log" survives navigation and page refresh.
       completedRuns: {},
 
@@ -174,6 +195,8 @@ const useUIStore = create(
         sidebarOpen: state.sidebarOpen,
         completedRuns: state.completedRuns,
         runningBatchIds: state.runningBatchIds,
+        processedBatches: state.processedBatches,
+        completedBatchDate: state.completedBatchDate,
       }),
     }
   )

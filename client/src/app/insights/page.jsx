@@ -1,147 +1,258 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import Annotation from '@/components/Annotation';
 import styles from '@/components/shared.module.css';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, BarChart, Bar, LineChart, Line } from 'recharts';
+import ins from './insights.module.css';
 import { useQuery } from '@tanstack/react-query';
+import useUIStore from '@/store/uiStore';
+import {
+  Package, CheckCircle2, Hourglass, RefreshCw,
+} from 'lucide-react';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PIPELINE_CFG = {
+  ENROLLMENT:    { label: 'Enrollment',    color: '#2563eb', bg: 'rgba(59,130,246,0.1)' },
+  RENEWAL:       { label: 'Renewal',       color: '#16a34a', bg: 'rgba(34,197,94,0.1)'  },
+  RETRO_COVERAGE:{ label: 'Retro Coverage',color: '#a855f7', bg: 'rgba(168,85,247,0.1)' },
+};
+
+const getPCfg = (type) =>
+  PIPELINE_CFG[(type || '').toUpperCase().replace(/[^A-Z_]/g, '_')] || PIPELINE_CFG.ENROLLMENT;
+
+const fmtDateTime = (ts) => {
+  if (!ts) return '—';
+  try {
+    return new Date(ts).toLocaleString([], {
+      month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+  } catch { return ts; }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sub-components
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Coloured pipeline type pill */
+function PipelinePill({ type }) {
+  const cfg = getPCfg(type);
+  return (
+    <span className={ins.pill} style={{ background: cfg.bg, color: cfg.color }}>
+      {cfg.label}
+    </span>
+  );
+}
+
+/** Single KPI card */
+function KpiCard({ icon, label, value, sub, accent }) {
+  return (
+    <div className={ins.kpiCard} style={{ borderTop: `3px solid ${accent || 'var(--primary)'}` }}>
+      <div className={ins.kpiCardTop}>
+        <span className={ins.kpiIcon} style={{ color: accent || 'var(--primary)', background: `${accent || 'var(--primary)'}18` }}>
+          {icon}
+        </span>
+        <span className={ins.kpiLabel}>{label}</span>
+      </div>
+      <div className={ins.kpiValue}>{value}</div>
+      {sub && <div className={ins.kpiSub}>{sub}</div>}
+    </div>
+  );
+}
+
+/** Empty state */
+function EmptyState({ icon, title, sub }) {
+  return (
+    <div className={ins.emptyState}>
+      {icon}
+      <p className={ins.emptyTitle}>{title}</p>
+      {sub && <p className={ins.emptySub}>{sub}</p>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Page
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function InsightsPage() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['metrics'],
-    queryFn: () => fetch('/api/metrics').then(res => res.json()),
-    refetchInterval: 5000
+  const { data: apiBatches = [], isLoading: batchesLoading } = useQuery({
+    queryKey: ['batches'],
+    queryFn: () => fetch('/api/batches').then(r => r.json()),
+    refetchInterval: 3000,
   });
 
-  const { kpis = {} } = data || {};
+  const { processedBatches = [] } = useUIStore();
 
-  // Formulate Rates dynamically
-  const clarificationRate = kpis.membersIdentified ? Math.round((kpis.pendingCount / kpis.membersIdentified) * 100) : 0;
-  const enrollmentCompletionRate = kpis.membersIdentified ? Math.round(((kpis.readyCount + (kpis.completedBatches * 50)) / kpis.membersIdentified) * 100) : 0;
+  // ── Derived data ──────────────────────────────────────────────────────────
 
-  // Trend mocks
-  const trendData = [
-    { month: 'Jan', enrollments: 4000, clarifications: 240, efficiency: 85 },
-    { month: 'Feb', enrollments: 3000, clarifications: 180, efficiency: 88 },
-    { month: 'Mar', enrollments: 5500, clarifications: 300, efficiency: 91 },
-    { 
-      month: 'Current', 
-      enrollments: kpis.inProgressBatches * 150 || 0, 
-      clarifications: kpis.pendingCount || 0,
-      efficiency: Math.min(100, Math.max(50, 100 - clarificationRate))
-    },
-  ];
+  // All completed batches — merge API + store, deduplicated, newest first
+  const allCompleted = useMemo(() => {
+    const map = new Map();
+    processedBatches.forEach(b => map.set(b.batchId, b));
+    apiBatches
+      .filter(b => b.status === 'Completed')
+      .forEach(b => {
+        map.set(b.id, {
+          batchId:        b.id,
+          pipelineType:   b.pipelineType || b.pipeline_type || 'ENROLLMENT',
+          membersCount:   b.membersCount  || 0,
+          processedCount: b.processedCount ?? b.membersCount ?? 0,
+          failedCount:    b.failedCount   || 0,
+          completedAt:    b.completedAt   || b.createdAt || '',
+          createdAt:      b.createdAt     || '',
+        });
+      });
+    return [...map.values()].sort((a, b) =>
+      (b.completedAt || b.createdAt || '').localeCompare(a.completedAt || a.createdAt || '')
+    );
+  }, [apiBatches, processedBatches]);
+
+  // Pending / in-progress batches (LIFO)
+  const pendingBatches = useMemo(() =>
+    apiBatches
+      .filter(b => b.status === 'Awaiting Approval' || b.status === 'In Progress')
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
+    [apiBatches]
+  );
+
+  // ── KPI values ────────────────────────────────────────────────────────────
+
+  const today = new Date().toISOString().slice(0, 10);
+  const completedToday = allCompleted.filter(b => (b.completedAt || b.createdAt || '').slice(0, 10) === today);
+  const todayProcessed = completedToday.reduce((s, b) => s + (b.processedCount || 0), 0);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <div className={styles.container}>
+
+      {/* ── Page header ─────────────────────────────────────────────────── */}
       <div className={styles.header}>
         <div>
-          <h1 className={styles.title}>System Insights</h1>
-          <p className={styles.subtitle}>Leadership analytics and operational intelligence.</p>
+          <h1 className={styles.title}>Release Insights</h1>
+          <p className={styles.subtitle}>
+            Processed batch history and release monitoring.
+          </p>
+        </div>
+        <div className={ins.liveIndicator}>
+          <span className={ins.liveDot} />
+          Live
         </div>
       </div>
 
-      <div className={styles.kpiGrid}>
-        <div className={styles.kpiCard}>
-          <div className={styles.kpiHeader}><span>Avg Processing Time</span></div>
-           <div className={styles.kpiValue}>1.2s</div>
-           <div className={`${styles.kpiTrend} ${styles.positive}`}>↓ 0.4s vs last month</div>
+      {/* ── KPI Summary — 2 cards only ───────────────────────────────────── */}
+      <Annotation
+        title="Workflow KPIs"
+        what="Core batch workflow metrics"
+        why="Gives operations an instant read on processed and pending batches"
+        how="Derived from live /api/batches and persisted processedBatches store"
+      >
+        <div className={ins.kpiGridTwoCol}>
+          <KpiCard
+            icon={<CheckCircle2 size={18} />}
+            label="Members Processed Today"
+            value={completedToday.length}
+            sub={`${todayProcessed} members enrolled`}
+            accent="#22c55e"
+          />
+          <KpiCard
+            icon={<Hourglass size={18} />}
+            label="Pending Release"
+            value={pendingBatches.length}
+            sub={pendingBatches.length > 0 ? 'Awaiting pipeline initiation' : 'Queue clear'}
+            accent="#f59e0b"
+          />
         </div>
-        <div className={styles.kpiCard}>
-          <div className={styles.kpiHeader}><span>Files Processed</span></div>
-           <div className={styles.kpiValue}>{isLoading ? '...' : kpis.filesToday}</div>
-        </div>
-        <div className={styles.kpiCard}>
-          <div className={styles.kpiHeader}><span>Clarification Rate</span></div>
-           <div className={styles.kpiValue}>{isLoading ? '...' : `${clarificationRate}%`}</div>
-           <div className={`${styles.kpiTrend} ${styles.positive}`}>↓ 2% vs last month</div>
-        </div>
-        <div className={styles.kpiCard}>
-          <div className={styles.kpiHeader}><span>Enrollment Completion Rate</span></div>
-           <div className={styles.kpiValue}>{isLoading ? '...' : `${Math.min(100, enrollmentCompletionRate)}%`}</div>
-           <div className={`${styles.kpiTrend} ${styles.positive}`}>↑ 5% vs last month</div>
-        </div>
-      </div>
+      </Annotation>
 
-      <div className={styles.gridSystem} style={{marginTop: 'var(--space-6)', gridTemplateColumns: 'repeat(3, 1fr)'}}>
-        <Annotation
-          title="Enrollment Trend"
-          what="Area chart tracking total enrollments."
-          why="Helps leadership forecast processing volume over time."
-          how="Soft areas indicate total volume seamlessly."
-        >
-          <div className={styles.sectionCard} style={{height: '350px'}}>
-            <div className={styles.cardHeader}>
-              <h2 className={styles.cardTitle}>Enrollment Trend</h2>
+      {/* ── Processed Batch History ──────────────────────────────────────── */}
+      <Annotation
+        title="Processed Batch Viewer"
+        what="Primary historical view of all completed batches"
+        why="Full audit trail of every pipeline run"
+        how="Merged from live API + persisted store, sorted newest-first"
+      >
+        <div className={styles.sectionCard}>
+          <div className={styles.cardHeader}>
+            <div className={ins.cardHeaderLeft}>
+              <Package size={16} color="var(--primary)" />
+              <h2 className={styles.cardTitle}>Processed Batch History</h2>
+              {allCompleted.length > 0 && (
+                <span className={ins.countBadge}>{allCompleted.length}</span>
+              )}
             </div>
-            <div style={{flex: 1, padding: 'var(--space-4)', width: '100%', height: '300px'}}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorEnrollments" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)'}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)'}} />
-                  <RechartsTooltip />
-                  <Area type="monotone" dataKey="enrollments" stroke="var(--primary)" strokeWidth={3} fillOpacity={1} fill="url(#colorEnrollments)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            {allCompleted.length > 0 && (
+              <div className={ins.cardHeaderStats}>
+                <span className={ins.statGreen}>
+                  ✓ {allCompleted.reduce((s, b) => s + (b.processedCount || 0), 0)} processed
+                </span>
+                {allCompleted.reduce((s, b) => s + (b.failedCount || 0), 0) > 0 && (
+                  <span className={ins.statRed}>
+                    ✗ {allCompleted.reduce((s, b) => s + (b.failedCount || 0), 0)} failed
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-        </Annotation>
 
-        <Annotation
-          title="Clarification Trend"
-          what="Bar chart representing AI exceptions."
-          why="Visualizes system intelligence improvement."
-          how="Tracks whether the AI is getting smarter and dropping manual review thresholds."
-        >
-          <div className={styles.sectionCard} style={{height: '350px'}}>
-            <div className={styles.cardHeader}>
-              <h2 className={styles.cardTitle}>Clarification Trend</h2>
+          {batchesLoading ? (
+            <div className={ins.loadingRow}>
+              <RefreshCw size={16} className={ins.spin} /> Loading batches…
             </div>
-            <div style={{flex: 1, padding: 'var(--space-4)', width: '100%', height: '300px'}}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)'}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)'}} />
-                  <RechartsTooltip />
-                  <Bar dataKey="clarifications" fill="var(--warning)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+          ) : allCompleted.length === 0 ? (
+            <EmptyState
+              icon={<Package size={36} color="var(--border)" />}
+              title="No processed batches yet"
+              sub="Completed batches from Release Staging will appear here automatically."
+            />
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Batch ID</th>
+                    <th>Workflow</th>
+                    <th>Members</th>
+                    <th>Results</th>
+                    <th>Upload Time</th>
+                    <th>Completion Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allCompleted.map(batch => (
+                    <tr key={batch.batchId}>
+                      <td>
+                        <span className={ins.batchIdCell}>{batch.batchId}</span>
+                      </td>
+                      <td>
+                        <PipelinePill type={batch.pipelineType} />
+                      </td>
+                      <td style={{ fontWeight: 600 }}>{batch.membersCount}</td>
+                      <td>
+                        <span className={ins.statGreen}>✓ {batch.processedCount}</span>
+                        {batch.failedCount > 0 && (
+                          <span className={ins.statRed} style={{ marginLeft: 8 }}>
+                            ✗ {batch.failedCount}
+                          </span>
+                        )}
+                      </td>
+                      <td className={ins.timeCell}>{fmtDateTime(batch.createdAt)}</td>
+                      <td className={ins.timeCell}>{fmtDateTime(batch.completedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-        </Annotation>
+          )}
+        </div>
+      </Annotation>
 
-        <Annotation
-          title="Processing Efficiency"
-           what="Line chart tracking the automation percentage."
-          why="Highlights overall ROI of the Agentic AI platform."
-          how="Demonstrates how many users flow through the system cleanly without touching human hands."
-        >
-          <div className={styles.sectionCard} style={{height: '350px'}}>
-            <div className={styles.cardHeader}>
-              <h2 className={styles.cardTitle}>Processing Efficiency (%)</h2>
-            </div>
-            <div style={{flex: 1, padding: 'var(--space-4)', width: '100%', height: '300px'}}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                  <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)'}} />
-                  <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{fill: 'var(--text-muted)'}} />
-                  <RechartsTooltip />
-                  <Line type="monotone" dataKey="efficiency" stroke="var(--success)" strokeWidth={3} dot={{r: 4, fill: 'var(--success)'}} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </Annotation>
-      </div>
     </div>
   );
 }
