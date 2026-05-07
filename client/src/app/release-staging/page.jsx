@@ -541,6 +541,16 @@ export default function ReleaseStagingPage() {
     onError: () => alert('No classified members to batch. Please run classification first.'),
   });
 
+  const handleSelectBatch = useCallback((batchId) => {
+    // If the pipeline panel is open, close it before switching to a new batch
+    if (showPanel) {
+      setShowPanel(false);
+      setPanelBatchId(null);
+      queryClient.invalidateQueries({ queryKey: ['batches'] });
+    }
+    setActiveBatchId(batchId);
+  }, [showPanel, queryClient]);
+
   const activeBatch = batches.find(b => b.id === activeBatchId);
 
   const openPanel = useCallback((batch, isReconnect = false) => {
@@ -560,6 +570,8 @@ export default function ReleaseStagingPage() {
 
   const handlePanelClose = () => {
     setShowPanel(false);
+    setPanelBatchId(null);
+    setActiveBatchId(null);
     queryClient.invalidateQueries({ queryKey: ['batches'] });
   };
 
@@ -607,7 +619,7 @@ export default function ReleaseStagingPage() {
           return (
             <button
               key={tab.key}
-              onClick={() => { setActiveTab(tab.key); setActiveBatchId(null); }}
+              onClick={() => { setActiveTab(tab.key); setActiveBatchId(null); setShowPanel(false); setPanelBatchId(null); }}
               style={{
                 padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer',
                 fontWeight: isActive ? 600 : 500,
@@ -635,7 +647,7 @@ export default function ReleaseStagingPage() {
         pipelineType={activeTab}
         batches={batches}
         isLoading={isLoading}
-        onSelectBatch={setActiveBatchId}
+        onSelectBatch={handleSelectBatch}
         activeBatchId={activeBatchId}
         runningBatchIds={runningBatchIds}
       />
