@@ -12,7 +12,7 @@ dist/
 *.sqlite3
 
 # ── Data directories (EDI files, parsed output) ───────────────────────────────
-data/
+test_data/
 parsed_data/
 
 # ── Test data (keep only the demo fixtures) ───────────────────────────────────
