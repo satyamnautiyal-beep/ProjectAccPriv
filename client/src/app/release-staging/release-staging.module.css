@@ -970,3 +970,52 @@
 .accentBlue   { border-top: 3px solid #2563eb; }
 .accentGreen  { border-top: 3px solid #16a34a; }
 .accentPurple { border-top: 3px solid #a855f7; }
+
+/* ============================================================
+   Focused live feed — current member section
+   ============================================================ */
+
+/* Current member live section */
+.currentMemberSection {
+  display: flex;
+  flex-direction: column;
+}
+
+/* "Processing X of Y — Name" header bar */
+.currentMemberHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px var(--space-4) 6px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.currentMemberPulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+  animation: livePulse 1.2s ease-in-out infinite;
+}
+.currentMemberLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.currentMemberName {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
