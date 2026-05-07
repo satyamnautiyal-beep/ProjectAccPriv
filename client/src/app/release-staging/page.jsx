@@ -1,51 +1,45 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import styles from './release-staging.module.css';
 import {
-  Package, X, Send, ShieldCheck, AlertCircle, CheckCircle2, ChevronRight,
+  Package, X, Send, ShieldCheck, AlertCircle, CheckCircle2,
+  Cpu, Zap, TrendingUp, Clock, AlertTriangle,
+  Brain, Calculator, FileCheck,
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import useUIStore from '@/store/uiStore';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Pipeline config
 // ---------------------------------------------------------------------------
-
-function statusColor(status) {
-  if (status === 'Enrolled' || status === 'Enrolled (SEP)') return 'green';
-  if (status === 'In Review') return 'amber';
-  return 'red';
-}
-
-function BatchStatusBadge({ status }) {
-  const map = {
-    'Awaiting Approval': { label: 'Pending Release', cls: styles.badgePending },
-    'Completed':         { label: 'Completed',        cls: styles.badgeEnrolled },
-    'In Progress':       { label: 'Processing',       cls: styles.badgeProcessing },
-  };
-  const { label, cls } = map[status] || { label: status, cls: styles.badgeMuted };
-  return <span className={`${styles.badge} ${cls}`}>{label}</span>;
-}
-// Pipeline type config
 const PIPELINE_CONFIG = {
   ENROLLMENT: {
     label: 'Enrollment',
     color: '#2563eb',
     bg: 'rgba(59,130,246,0.1)',
+    border: 'rgba(59,130,246,0.25)',
     description: 'OEP / SEP enrollment records',
+    icon: FileCheck,
+    accentClass: 'accentBlue',
   },
   RENEWAL: {
     label: 'Renewal',
     color: '#16a34a',
     bg: 'rgba(34,197,94,0.1)',
+    border: 'rgba(34,197,94,0.25)',
     description: 'Premium change renewal records',
+    icon: TrendingUp,
+    accentClass: 'accentGreen',
   },
   RETRO_COVERAGE: {
     label: 'Retro Coverage',
     color: '#a855f7',
     bg: 'rgba(168,85,247,0.1)',
+    border: 'rgba(168,85,247,0.25)',
     description: 'Retroactive enrollment records',
+    icon: Clock,
+    accentClass: 'accentPurple',
   },
 };
 
@@ -55,274 +49,380 @@ const getPipelineConfig = (type) => {
 };
 
 // ---------------------------------------------------------------------------
-// Group events into per-member sections
+// Helpers
 // ---------------------------------------------------------------------------
-function groupEventsByMember(events) {
-  const groups = [];
-  let currentGroup = null;
-  for (const ev of events) {
-    if (ev.type === 'header') {
-      if (currentGroup) groups.push(currentGroup);
-      currentGroup = { id: ev.id, headerMsg: ev.message, steps: [], result: null };
-    } else if (ev.type === 'result') {
-      if (currentGroup) currentGroup.result = ev;
-    } else {
-      if (currentGroup) currentGroup.steps.push(ev);
-    }
-  }
-  if (currentGroup) groups.push(currentGroup);
-  return { groups };
+function BatchStatusBadge({ status }) {
+  const map = {
+    'Awaiting Approval': { label: 'Pending Release', cls: styles.badgePending },
+    'Completed':         { label: 'Completed',        cls: styles.badgeEnrolled },
+    'In Progress':       { label: 'Processing',       cls: styles.badgeProcessing },
+  };
+  const { label, cls } = map[status] || { label: status, cls: styles.badgeMuted };
+  return <span className={`${styles.badge} ${cls}`}>{label}</span>;
 }
 
 // ---------------------------------------------------------------------------
-// Member Card
+// Classify SSE event into a visual node type
 // ---------------------------------------------------------------------------
-function MemberCard({ group, isExpanded, onToggle }) {
-  const result = group.result;
-  const isDone = !!result;
-  const color = isDone ? statusColor(result.status) : null;
+function classifyEvent(ev) {
+  const msg = ev.message || '';
+  if (ev.type === 'agent_call') return 'agent_call';
+  if (/anomaly|warning|⚠/i.test(msg))                                          return 'anomaly';
+  if (/override|llm confirmed|llm override|reasoning/i.test(msg))               return 'llm_reasoning';
+  if (/specialist note/i.test(msg))                                              return 'specialist';
+  if (/compliance|regulatory|mandate/i.test(msg))                               return 'compliance';
+  if (/calculat|comput|delta|liability|premium change|aptc|subsidy/i.test(msg)) return 'calculation';
+  if (/priority.*high|high.*priority|flagging.*review|in review/i.test(msg))    return 'flag';
+  if (/approved|approving|enrolled|all.*passed|no.*liability/i.test(msg))       return 'approved';
+  if (/error|failed|no coverage/i.test(msg))                                    return 'error';
+  if (/connecting|starting.*pipeline|initializ/i.test(msg))                     return 'system';
+  return 'thinking';
+}
 
-  const dotCls = !isDone ? styles.dotPulse
-    : color === 'green' ? styles.dotGreen
-    : color === 'amber' ? styles.dotAmber
-    : styles.dotRed;
+const NODE_DOT = {
+  agent_call:    styles.dotAgent,
+  calculation:   styles.dotCalc,
+  llm_reasoning: styles.dotLlm,
+  anomaly:       styles.dotAnomaly,
+  specialist:    styles.dotSpecialist,
+  compliance:    styles.dotCompliance,
+  flag:          styles.dotFlag,
+  approved:      styles.dotApproved,
+  error:         styles.dotError,
+  system:        styles.dotSystem,
+  thinking:      styles.dotThinking,
+};
 
-  const badgeCls = color === 'green' ? styles.memberBadgeGreen
-    : color === 'amber' ? styles.memberBadgeAmber
-    : styles.memberBadgeRed;
+function NodeIcon({ nodeType, size = 11 }) {
+  const map = {
+    agent_call:    <Cpu size={size} />,
+    calculation:   <Calculator size={size} />,
+    llm_reasoning: <Brain size={size} />,
+    anomaly:       <AlertTriangle size={size} />,
+    flag:          <AlertCircle size={size} />,
+    approved:      <CheckCircle2 size={size} />,
+    specialist:    <Zap size={size} />,
+  };
+  return map[nodeType] || null;
+}
 
-  const memberName = group.headerMsg.replace('-- Starting pipeline for ', '').replace('-- ', '');
-  const statusLabel = result?.message?.split('->')[1]?.trim() || result?.status || '';
+function cleanMessage(msg) {
+  return (msg || '').replace(/^--\s*Starting pipeline for\s*/i, '').replace(/^\s+/, '').trim();
+}
 
-  return (
-    <div className={`${styles.memberCard} ${isDone ? styles.memberCardDone : styles.memberCardPending} ${isExpanded ? styles.memberCardExpanded : ''}`}>
-      <div
-        className={styles.memberCardHeader}
-        onClick={isDone ? onToggle : undefined}
-        style={{ cursor: isDone ? 'pointer' : 'default' }}
-      >
-        <span className={`${styles.memberDot} ${dotCls}`} />
-        <span className={styles.memberCardName}>{memberName}</span>
-        {isDone ? (
-          <>
-            <span className={`${styles.memberBadge} ${badgeCls}`}>{statusLabel}</span>
-            <span className={`${styles.memberChevron} ${isExpanded ? styles.memberChevronOpen : ''}`}>
-              <ChevronRight size={13} />
-            </span>
-          </>
-        ) : (
-          <span className={styles.memberSpinner}><span /><span /><span /></span>
-        )}
-      </div>
-      {isDone && isExpanded && (
-        <div className={styles.memberSteps}>
-          {group.steps.map(ev => {
-            const msg = ev.message?.trim() || '';
-            const isWarn = /warning|error|failed|not strong/i.test(msg);
-            return (
-              <div key={ev.id} className={styles.memberStep}>
-                <span className={`${styles.memberStepIcon} ${isWarn ? styles.memberStepIconWarn : styles.memberStepIconDone}`}>
-                  {isWarn ? '!' : 'v'}
-                </span>
-                <span className={`${styles.memberStepText} ${isWarn ? styles.memberStepTextWarn : ''}`}>{msg}</span>
-              </div>
-            );
-          })}
-          {result.summary && (
-            <div className={`${styles.memberResult} ${color === 'green' ? styles.memberResultGreen : color === 'amber' ? styles.memberResultAmber : styles.memberResultRed}`}>
-              <div className={styles.memberResultSummary}>{result.summary}</div>
-            </div>
+// ---------------------------------------------------------------------------
+// Single live log node (current member only)
+// ---------------------------------------------------------------------------
+function LiveNode({ ev, isLast }) {
+  const nodeType = ev.nodeType || 'thinking';
+  const dotCls   = NODE_DOT[nodeType] || styles.dotThinking;
+  const icon     = <NodeIcon nodeType={nodeType} />;
+
+  if (nodeType === 'agent_call') {
+    return (
+      <div className={styles.feedAgentCall}>
+        <div className={styles.feedAgentDot} style={{ background: '#0ea5e9', borderColor: '#0ea5e9' }} />
+        {!isLast && <div className={styles.feedNodeLine} />}
+        <div className={styles.feedAgentContent}>
+          <span className={styles.feedAgentChip}
+            style={{ color: '#0369a1', background: 'rgba(14,165,233,0.1)', borderColor: 'rgba(14,165,233,0.25)' }}>
+            <Cpu size={10} /> {ev.agent || ev.message}
+          </span>
+          {ev.agent && ev.message !== ev.agent && (
+            <span className={styles.feedAgentDesc}>{ev.message}</span>
           )}
         </div>
-      )}
+      </div>
+    );
+  }
+
+  const isHighlight = ['calculation','llm_reasoning','anomaly','flag','approved','specialist','compliance','error'].includes(nodeType);
+
+  return (
+    <div className={`${styles.feedNode} ${isHighlight ? styles.feedNodeHighlight : ''} ${styles[`feedNode_${nodeType}`] || ''}`}>
+      <div className={`${styles.feedDot} ${dotCls}`}>
+        {icon && <span className={styles.feedDotIcon}>{icon}</span>}
+      </div>
+      {!isLast && <div className={styles.feedNodeLine} />}
+      <div className={styles.feedNodeContent}>
+        <span className={styles.feedNodeText}>{cleanMessage(ev.message)}</span>
+        <span className={styles.feedNodeTime}>
+          {ev.ts ? new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : ''}
+        </span>
+      </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline Console
-// ---------------------------------------------------------------------------
-function PipelineConsole({ batchId, memberCount, pipelineType, savedState, onStateUpdate, onClose, reconnect }) {
-  const [events, setEvents] = useState(savedState?.events || []);
-  const [processed, setProcessed] = useState(savedState?.processed || 0);
-  const [failed, setFailed] = useState(savedState?.failed || 0);
-  const [phase, setPhase] = useState(savedState?.phase || 'running');
-  const [initPhase, setInitPhase] = useState(savedState ? 'active' : 'connecting');
-  const [expandedId, setExpandedId] = useState(null);
-  const timelineEndRef = useRef(null);
-  const alreadyDone = savedState?.phase === 'done';
-  const pendingStateRef = useRef(null);
-  // Capture reconnect at mount time — must not change during the session
-  const reconnectRef = useRef(reconnect);
-  const pipelineCfg = getPipelineConfig(pipelineType);
 
-  const flushPendingState = useCallback(() => {
-    if (pendingStateRef.current && onStateUpdate) {
-      onStateUpdate(pendingStateRef.current);
-      pendingStateRef.current = null;
-    }
-  }, [onStateUpdate]);
+
+// ---------------------------------------------------------------------------
+// Pipeline Reasoning Panel — focused single-member live feed
+// ---------------------------------------------------------------------------
+function PipelineReasoningPanel({ batchId, memberCount, pipelineType, onClose, reconnect }) {
+  const [currentLogs, setCurrentLogs]             = useState([]);
+  const [currentMemberName, setCurrentMemberName] = useState(null);
+  const [processed, setProcessed]   = useState(0);
+  const [failed, setFailed]         = useState(0);
+  const [phase, setPhase]           = useState('running');
+  const [initPhase, setInitPhase]   = useState('connecting');
+
+  const feedEndRef   = useRef(null);
+  const pipelineCfg  = getPipelineConfig(pipelineType);
+  const totalDone    = processed + failed;
+  const progress     = memberCount > 0 ? Math.round((totalDone / memberCount) * 100) : 0;
+
+  // Auto-scroll to bottom of live feed whenever new logs arrive
+  useEffect(() => {
+    feedEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [currentLogs]);
 
   useEffect(() => {
-    if (alreadyDone) return;
     const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
     const controller = new AbortController();
-    // Use the ref — stable, won't cause re-runs
-    const method = reconnectRef.current ? 'GET' : 'POST';
+
+    async function processStream(response) {
+      const reader  = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          let payload;
+          try { payload = JSON.parse(raw); } catch { continue; }
+
+          const id = Math.random().toString(36).slice(2);
+
+          if (payload.type === 'thinking') {
+            setInitPhase('active');
+            const isHeader = payload.message.startsWith('--');
+            if (isHeader) {
+              const name = payload.message
+                .replace(/^--\s*Starting pipeline for\s*/i, '')
+                .replace(/^--\s*/, '')
+                .trim();
+              setCurrentMemberName(name);
+              setCurrentLogs([]);
+            } else {
+              const nodeType = classifyEvent({ type: 'thinking', message: payload.message });
+              setCurrentLogs(prev => [...prev, { id, message: payload.message, nodeType, ts: new Date().toISOString() }]);
+            }
+          } else if (payload.type === 'agent_call') {
+            setInitPhase('active');
+            setCurrentLogs(prev => [...prev, {
+              id, type: 'agent_call', nodeType: 'agent_call',
+              agent: payload.agent, message: payload.message || payload.agent,
+              ts: new Date().toISOString(),
+            }]);
+          } else if (payload.type === 'member_result') {
+            setInitPhase('active');
+            if (payload.status === 'Processing Failed') setFailed(f => f + 1);
+            else setProcessed(p => p + 1);
+            setCurrentLogs([]);
+            setCurrentMemberName(null);
+          } else if (payload.type === 'done') {
+            setPhase('done');
+            setCurrentLogs([]);
+            setCurrentMemberName(null);
+          }
+        }
+      }
+    }
+
     (async () => {
       try {
-        const res = await fetch(`${backendUrl}/api/batches/stream/${batchId}`, {
+        // Try POST to start, fall back to GET if already running (409 = StrictMode double-mount or reconnect)
+        let method = reconnect ? 'GET' : 'POST';
+        let res = await fetch(`${backendUrl}/api/batches/stream/${batchId}`, {
           method,
           headers: { 'Accept': 'text/event-stream', 'Cache-Control': 'no-cache' },
           signal: controller.signal,
         });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop();
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const raw = line.slice(6).trim();
-            if (!raw) continue;
-            let payload;
-            try { payload = JSON.parse(raw); } catch { continue; }
-            const id = Math.random().toString(36).slice(2);
-            if (payload.type === 'thinking') {
-              setInitPhase('active');
-              const isHeader = payload.message.startsWith('--');
-              setEvents(prev => [...prev, { id, type: isHeader ? 'header' : 'stage', message: payload.message, ts: new Date().toISOString() }]);
-            } else if (payload.type === 'member_result') {
-              setInitPhase('active');
-              const ev = {
-                id, type: 'result', status: payload.status,
-                message: `${payload.name} (${payload.subscriber_id}) -> ${payload.status}`,
-                summary: payload.summary, ts: new Date().toISOString(),
-              };
-              setEvents(prev => [...prev, ev]);
-              if (payload.status === 'Processing Failed') setFailed(f => f + 1);
-              else setProcessed(p => p + 1);
-            } else if (payload.type === 'done') {
-              setPhase('done');
-              setEvents(prev => {
-                pendingStateRef.current = { batchId, events: prev, processed: payload.processed, failed: payload.failed, phase: 'done', pipelineType };
-                setTimeout(flushPendingState, 0);
-                return prev;
-              });
-            }
-          }
+
+        if (res.status === 409) {
+          // Batch already running — reconnect via GET
+          res = await fetch(`${backendUrl}/api/batches/stream/${batchId}`, {
+            method: 'GET',
+            headers: { 'Accept': 'text/event-stream', 'Cache-Control': 'no-cache' },
+            signal: controller.signal,
+          });
         }
-        // Stream closed cleanly — if we were reconnecting and got no events,
-        // the batch completed but the log wasn't available. Mark as done.
+
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        await processStream(res);
+
+        // Stream ended cleanly
         if (reconnect) {
           setPhase('done');
           setInitPhase(prev => prev === 'connecting' ? 'no_log' : prev);
         }
       } catch (err) {
-        if (err.name !== 'AbortError') {
-          // If reconnecting to a completed batch and we got no events,
-          // the log wasn't persisted (server restarted before completion).
-          // Show a graceful message rather than an error.
-          if (reconnect) {
-            setPhase('done');
-            setInitPhase('active');
-          } else {
-            setEvents(prev => [...prev, { id: Math.random().toString(36).slice(2), type: 'error', message: `Error: ${err.message}`, ts: new Date().toISOString() }]);
-            setPhase('done');
-          }
+        if (err.name === 'AbortError') return;
+        if (reconnect) {
+          setPhase('done');
+          setInitPhase('active');
+        } else {
+          setCurrentLogs(prev => [...prev, {
+            id: Math.random().toString(36).slice(2),
+            nodeType: 'error',
+            message: `Error: ${err.message}`,
+            ts: new Date().toISOString(),
+          }]);
+          setPhase('done');
         }
       }
     })();
+
     return () => controller.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batchId, alreadyDone, flushPendingState, pipelineType]);
-  // NOTE: reconnect intentionally excluded — captured via ref at mount, must not re-trigger
-
-  const prevProcessedRef = useRef(processed);
-  useEffect(() => {
-    if (processed !== prevProcessedRef.current || phase === 'done') {
-      timelineEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      prevProcessedRef.current = processed;
-    }
-  }, [processed, phase]);
-
-  const progress = memberCount > 0 ? Math.round(((processed + failed) / memberCount) * 100) : 0;
-  const { groups } = groupEventsByMember(events);
-  const doneGroups = groups.filter(g => !!g.result);
-  const activeGroup = groups.find(g => !g.result) || null;
+  }, [batchId]);
 
   return (
-    <div className={styles.consoleOverlay} onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className={styles.consolePanel}>
-        <div className={styles.consoleHeader}>
-          <div className={styles.consoleHeaderLeft}>
-            <span className={`${styles.consoleLiveDot} ${phase === 'running' ? styles.consoleLiveDotActive : styles.consoleLiveDotDone}`} />
+    <div className={`${styles.reasoningPanel} ${styles[pipelineCfg.accentClass]}`}>
+      {/* Header */}
+      <div className={styles.reasoningHeader}>
+        <div className={styles.reasoningHeaderLeft}>
+          <span className={`${styles.reasoningLiveDot} ${phase === 'running' ? styles.reasoningLiveDotActive : styles.reasoningLiveDotDone}`} />
+          <div>
+            <div className={styles.reasoningTitle}>
+              <span
+                className={styles.reasoningPipelineBadge}
+                style={{ color: pipelineCfg.color, background: pipelineCfg.bg, borderColor: pipelineCfg.border }}
+              >
+                {pipelineCfg.label}
+              </span>
+              {phase === 'running' ? 'Pipeline Running' : 'Pipeline Complete'}
+            </div>
+            <div className={styles.reasoningBatchId}>{batchId}</div>
+          </div>
+        </div>
+        <div className={styles.reasoningHeaderRight}>
+          {processed > 0 && (
+            <span className={styles.reasoningStat} style={{ color: '#16a34a' }}>✓ {processed}</span>
+          )}
+          {failed > 0 && (
+            <span className={styles.reasoningStat} style={{ color: '#dc2626' }}>✗ {failed}</span>
+          )}
+          {phase === 'running' && memberCount > 0 && (
+            <span className={styles.reasoningStat} style={{ color: 'var(--text-muted)' }}>
+              {memberCount - totalDone} left
+            </span>
+          )}
+          <button className={styles.reasoningCloseBtn} onClick={onClose} title="Close">
+            <X size={16} />
+          </button>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className={styles.reasoningProgressTrack}>
+        <div
+          className={`${styles.reasoningProgressFill} ${phase === 'done' ? styles.reasoningProgressDone : ''}`}
+          style={{ width: `${progress}%`, background: pipelineCfg.color }}
+        />
+      </div>
+
+      {/* Body */}
+      <div className={styles.reasoningBody}>
+        {/* Connecting state */}
+        {initPhase === 'connecting' && (
+          <div className={styles.reasoningConnecting}>
+            <div className={styles.connectingSpinner}>
+              <span /><span /><span /><span />
+            </div>
             <div>
-              <div className={styles.consoleTitle} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ padding: '2px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: 700, backgroundColor: pipelineCfg.bg, color: pipelineCfg.color }}>
-                  {pipelineCfg.label}
-                </span>
-                {phase === 'running' ? 'Pipeline Running' : 'Pipeline Complete'}
-              </div>
-              <div className={styles.consoleBatchId}>{batchId}</div>
-            </div>
-          </div>
-          <div className={styles.consoleHeaderRight}>
-            {processed > 0 && <span className={styles.consoleMiniStat} style={{ color: '#16a34a' }}>v {processed}</span>}
-            {failed > 0 && <span className={styles.consoleMiniStat} style={{ color: '#dc2626' }}>x {failed}</span>}
-            {phase === 'running' && <span className={styles.consoleMiniStat} style={{ color: 'var(--text-muted)' }}>{memberCount - processed - failed} left</span>}
-            <button className={styles.consoleCloseBtn} onClick={onClose} title={phase === 'running' ? 'Close (pipeline continues in background)' : 'Close'}><X size={16} /></button>
-          </div>
-        </div>
-        <div className={styles.consoleProgressTrack}>
-          <div className={`${styles.consoleProgressFill} ${phase === 'done' ? styles.consoleProgressFillDone : ''}`} style={{ width: `${progress}%` }} />
-        </div>
-        <div className={styles.consoleBody}>
-          {initPhase === 'connecting' && (
-            <div className={styles.initState}>
-              <div className={styles.initSpinner}><span /><span /><span /><span /></div>
-              <div className={styles.initText}>
-                <span className={styles.initTitle}>Starting {pipelineCfg.label} pipeline</span>
-                <span className={styles.initSub}>Connecting to AI Refinery and loading {memberCount} member{memberCount !== 1 ? 's' : ''}...</span>
+              <div className={styles.connectingTitle}>Starting {pipelineCfg.label} pipeline</div>
+              <div className={styles.connectingSubtitle}>
+                Connecting · {memberCount} member{memberCount !== 1 ? 's' : ''} queued
               </div>
             </div>
-          )}
-          {initPhase === 'no_log' && (
-            <div className={styles.initState}>
-              <div className={styles.initText}>
-                <span className={styles.initTitle}>Log not available</span>
-                <span className={styles.initSub}>The run log for this batch was not retained. This can happen if the server was restarted after the pipeline completed.</span>
-              </div>
-            </div>
-          )}
-          {doneGroups.map(group => (
-            <MemberCard key={group.id} group={group} isExpanded={expandedId === group.id} onToggle={() => setExpandedId(expandedId === group.id ? null : group.id)} />
-          ))}
-          {activeGroup && <MemberCard key={activeGroup.id} group={activeGroup} isExpanded={false} onToggle={() => {}} />}
-          <div ref={timelineEndRef} />
-        </div>
-        {phase === 'done' && (
-          <div className={styles.consoleFooter}>
-            <div className={styles.consoleFooterSummary}>
-              <CheckCircle2 size={16} color="#22c55e" />
-              <span><strong>{processed}</strong> processed{failed > 0 && <>, <strong style={{ color: '#dc2626' }}>{failed}</strong> failed</>}</span>
-            </div>
-            <button className={styles.consoleBtnClose} onClick={onClose}>Close</button>
           </div>
         )}
-        {phase === 'running' && (
-          <div className={styles.consoleFooter}>
-            <div className={styles.consoleFooterSummary}>
-              <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Processing in background...</span>
+
+        {/* No log state */}
+        {initPhase === 'no_log' && (
+          <div className={styles.reasoningNoLog}>
+            <div className={styles.noLogTitle}>Log not available</div>
+            <div className={styles.noLogSub}>
+              The run log for this batch was not retained. This can happen if the server
+              was restarted after the pipeline completed.
             </div>
-            <button className={styles.consoleBtnClose} onClick={onClose}>Close & Continue</button>
           </div>
         )}
+
+        {/* Current member live feed */}
+        {initPhase === 'active' && phase === 'running' && (
+          <div className={styles.currentMemberSection}>
+            {/* "Processing X of Y — Name" sticky header */}
+            <div className={styles.currentMemberHeader}>
+              <span className={styles.currentMemberPulse} />
+              <span className={styles.currentMemberLabel}>
+                Processing {totalDone + 1} of {memberCount}
+              </span>
+              {currentMemberName && (
+                <span className={styles.currentMemberName}>{currentMemberName}</span>
+              )}
+            </div>
+
+            {/* Live log nodes */}
+            <div className={styles.reasoningFeed}>
+              {currentLogs.map((ev, i) => (
+                <LiveNode key={ev.id} ev={ev} isLast={i === currentLogs.length - 1} />
+              ))}
+              <div className={styles.feedLiveIndicator}>
+                <span className={styles.feedLiveDot} style={{ background: pipelineCfg.color }} />
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>live</span>
+              </div>
+              <div ref={feedEndRef} />
+            </div>
+          </div>
+        )}
+
+        {/* Done state */}
+        {phase === 'done' && initPhase !== 'connecting' && initPhase !== 'no_log' && (
+          <div style={{ padding: '16px 16px 8px' }}>
+            <div className={styles.detailDoneBox}>
+              <ShieldCheck size={28} color="#22c55e" />
+              <div className={styles.detailDoneTitle}>All members processed</div>
+              <div className={styles.detailDoneSub}>
+                {processed} processed{failed > 0 && `, ${failed} failed`}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className={styles.reasoningFooter}>
+        {phase === 'running' ? (
+          <span className={styles.reasoningFooterRunning}>
+            Pipeline running in background — safe to close
+          </span>
+        ) : (
+          <div className={styles.reasoningFooterSummary}>
+            <CheckCircle2 size={14} color="#22c55e" />
+            <span>
+              <strong>{processed}</strong> processed
+              {failed > 0 && <>, <strong style={{ color: '#dc2626' }}>{failed}</strong> failed</>}
+            </span>
+          </div>
+        )}
+        <button
+          className={styles.reasoningCloseFooterBtn}
+          style={{ background: pipelineCfg.color }}
+          onClick={onClose}
+        >
+          {phase === 'running' ? 'Close & Continue' : 'Close'}
+        </button>
       </div>
     </div>
   );
@@ -377,8 +477,8 @@ function PipelineTab({ pipelineType, batches, isLoading, onSelectBatch, activeBa
             <div className={styles.batchCardMeta}>Created {new Date(batch.createdAt).toLocaleDateString()}</div>
             {batch.status === 'Completed' && (
               <div className={styles.batchCardStats}>
-                <span className={styles.batchCardStatGreen}>v {batch.processedCount ?? batch.membersCount} processed</span>
-                {batch.failedCount > 0 && <span className={styles.batchCardStatRed}>x {batch.failedCount} failed</span>}
+                <span className={styles.batchCardStatGreen}>✓ {batch.processedCount ?? batch.membersCount} processed</span>
+                {batch.failedCount > 0 && <span className={styles.batchCardStatRed}>✗ {batch.failedCount} failed</span>}
               </div>
             )}
           </div>
@@ -392,17 +492,16 @@ function PipelineTab({ pipelineType, batches, isLoading, onSelectBatch, activeBa
 // Main Page
 // ---------------------------------------------------------------------------
 export default function ReleaseStagingPage() {
-  const [activeBatchId, setActiveBatchId] = useState(null);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [showConsole, setShowConsole] = useState(false);
-  const [consoleBatchId, setConsoleBatchId] = useState(null);
-  const [consoleMemberCount, setConsoleMemberCount] = useState(0);
-  const [consolePipelineType, setConsolePipelineType] = useState('ENROLLMENT');
-  const [consoleReconnect, setConsoleReconnect] = useState(false);
-  const [activeTab, setActiveTab] = useState('ENROLLMENT');
+  const [activeBatchId, setActiveBatchId]           = useState(null);
+  const [showConfirm, setShowConfirm]               = useState(false);
+  const [showPanel, setShowPanel]                   = useState(false);
+  const [panelBatchId, setPanelBatchId]             = useState(null);
+  const [panelMemberCount, setPanelMemberCount]     = useState(0);
+  const [panelPipelineType, setPanelPipelineType]   = useState('ENROLLMENT');
+  const [panelReconnect, setPanelReconnect]         = useState(false);
+  const [activeTab, setActiveTab]                   = useState('ENROLLMENT');
 
   const {
-    completedRuns, saveCompletedRun,
     runningBatchIds, addRunningBatch, removeRunningBatch,
   } = useUIStore();
   const queryClient = useQueryClient();
@@ -444,43 +543,35 @@ export default function ReleaseStagingPage() {
 
   const activeBatch = batches.find(b => b.id === activeBatchId);
 
-  // Open the console for a batch — either to start it or to reconnect to a live/completed run
-  const openConsole = useCallback((batch, isReconnect = false) => {
-    setConsoleBatchId(batch.id);
-    setConsoleMemberCount(batch.membersCount);
-    setConsolePipelineType(batch.pipelineType || batch.pipeline_type || 'ENROLLMENT');
-    setConsoleReconnect(isReconnect);
-    setShowConsole(true);
+  const openPanel = useCallback((batch, isReconnect = false) => {
+    setPanelBatchId(batch.id);
+    setPanelMemberCount(batch.membersCount);
+    setPanelPipelineType(batch.pipelineType || batch.pipeline_type || 'ENROLLMENT');
+    setPanelReconnect(isReconnect);
+    setShowPanel(true);
   }, []);
 
   const handleInitiate = () => {
     if (!activeBatch) return;
     addRunningBatch(activeBatch.id);
     setShowConfirm(false);
-    openConsole(activeBatch, false); // POST — start new run
+    openPanel(activeBatch, false);
   };
 
-  const handleConsoleClose = () => {
-    setShowConsole(false);
+  const handlePanelClose = () => {
+    setShowPanel(false);
     queryClient.invalidateQueries({ queryKey: ['batches'] });
   };
 
-  const handleStateUpdate = useCallback((state) => {
-    saveCompletedRun(state);
-    if (state.phase === 'done') {
-      removeRunningBatch(state.batchId);
-    }
-  }, [saveCompletedRun, removeRunningBatch]);
-
   const counts = {
-    ENROLLMENT: batches.filter(b => (b.pipelineType || 'ENROLLMENT').toUpperCase() === 'ENROLLMENT').length,
-    RENEWAL: batches.filter(b => (b.pipelineType || '').toUpperCase() === 'RENEWAL').length,
+    ENROLLMENT:    batches.filter(b => (b.pipelineType || 'ENROLLMENT').toUpperCase() === 'ENROLLMENT').length,
+    RENEWAL:       batches.filter(b => (b.pipelineType || '').toUpperCase() === 'RENEWAL').length,
     RETRO_COVERAGE: batches.filter(b => (b.pipelineType || '').toUpperCase() === 'RETRO_COVERAGE').length,
   };
 
   const tabs = [
-    { key: 'ENROLLMENT', label: 'Enrollment', count: counts.ENROLLMENT },
-    { key: 'RENEWAL', label: 'Renewal', count: counts.RENEWAL },
+    { key: 'ENROLLMENT',    label: 'Enrollment',    count: counts.ENROLLMENT },
+    { key: 'RENEWAL',       label: 'Renewal',       count: counts.RENEWAL },
     { key: 'RETRO_COVERAGE', label: 'Retro Coverage', count: counts.RETRO_COVERAGE },
   ];
 
@@ -553,9 +644,8 @@ export default function ReleaseStagingPage() {
       <div className={`${styles.detailPanel} ${activeBatchId ? styles.detailPanelOpen : ''}`}>
         {activeBatch && (() => {
           const cfg = getPipelineConfig(activeBatch.pipelineType || activeTab);
-          const isRunning = runningBatchIds.includes(activeBatch.id) || activeBatch.status === 'In Progress';
+          const isRunning  = runningBatchIds.includes(activeBatch.id) || activeBatch.status === 'In Progress';
           const isCompleted = activeBatch.status === 'Completed';
-          const hasSavedLog = !!completedRuns[activeBatch.id];
 
           return (
             <>
@@ -590,7 +680,7 @@ export default function ReleaseStagingPage() {
                   <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>{new Date(activeBatch.createdAt).toLocaleDateString()}</span>
                 </div>
 
-                {/* ── Completed ── */}
+                {/* Completed */}
                 {isCompleted && (
                   <div className={styles.detailDoneBox}>
                     <ShieldCheck size={32} color="#22c55e" />
@@ -599,17 +689,16 @@ export default function ReleaseStagingPage() {
                       {activeBatch.processedCount ?? activeBatch.membersCount} processed
                       {activeBatch.failedCount > 0 && `, ${activeBatch.failedCount} failed`}
                     </div>
-                    {/* Always show view log — GET replay works even after server restart */}
-                    <button className={styles.btnViewLog} onClick={() => openConsole(activeBatch, true)}>
+                    <button className={styles.btnViewLog} onClick={() => openPanel(activeBatch, true)}>
                       View run log
                     </button>
                   </div>
                 )}
 
-                {/* ── Running (In Progress) ── */}
+                {/* Running */}
                 {isRunning && !isCompleted && (
                   <div className={styles.detailRunningBox}>
-                    <div className={styles.detailRunningDot} />
+                    <div className={styles.detailRunningDot} style={{ background: cfg.color }} />
                     <div className={styles.detailRunningTitle}>Pipeline Running</div>
                     <div className={styles.detailRunningSub}>
                       Processing {activeBatch.membersCount} member{activeBatch.membersCount !== 1 ? 's' : ''} in the background
@@ -617,16 +706,20 @@ export default function ReleaseStagingPage() {
                     <button
                       className={styles.btnViewLive}
                       style={{ borderColor: cfg.color, color: cfg.color }}
-                      onClick={() => openConsole(activeBatch, true)}  // GET — reconnect
+                      onClick={() => openPanel(activeBatch, true)}
                     >
                       View live logs
                     </button>
                   </div>
                 )}
 
-                {/* ── Awaiting Approval (not yet started) ── */}
+                {/* Awaiting Approval */}
                 {!isRunning && !isCompleted && (
-                  <button className={styles.btnInitiate} onClick={() => setShowConfirm(true)}>
+                  <button
+                    className={styles.btnInitiate}
+                    style={{ background: cfg.color }}
+                    onClick={() => setShowConfirm(true)}
+                  >
                     <Send size={16} /> Initiate {cfg.label} Pipeline
                   </button>
                 )}
@@ -646,14 +739,14 @@ export default function ReleaseStagingPage() {
               <h2 className={styles.modalTitle}>Final Release Affirmation</h2>
               <p className={styles.modalBody}>
                 I agree that I have reviewed the facts and want to send this batch to the{' '}
-                <strong>{cfg.label}</strong> pipeline. I certify that all data integrity warnings
+                <strong>{cfg.label}</strong> pipeline. All compliance flags and anomalies
                 have been resolved or manually overridden.
               </p>
               <div className={styles.modalMeta}>
                 <span>{activeBatch.membersCount} members</span>
-                <span>.</span>
+                <span>·</span>
                 <span style={{ color: cfg.color, fontWeight: 600 }}>{cfg.label}</span>
-                <span>.</span>
+                <span>·</span>
                 <span>{activeBatch.id}</span>
               </div>
               <div className={styles.modalActions}>
@@ -667,16 +760,14 @@ export default function ReleaseStagingPage() {
         );
       })()}
 
-      {/* Live pipeline console */}
-      {showConsole && consoleBatchId && (
-        <PipelineConsole
-          batchId={consoleBatchId}
-          memberCount={consoleMemberCount}
-          pipelineType={consolePipelineType}
-          savedState={completedRuns[consoleBatchId] || null}
-          onStateUpdate={handleStateUpdate}
-          onClose={handleConsoleClose}
-          reconnect={consoleReconnect}
+      {/* Live pipeline reasoning panel */}
+      {showPanel && panelBatchId && (
+        <PipelineReasoningPanel
+          batchId={panelBatchId}
+          memberCount={panelMemberCount}
+          pipelineType={panelPipelineType}
+          onClose={handlePanelClose}
+          reconnect={panelReconnect}
         />
       )}
     </div>
